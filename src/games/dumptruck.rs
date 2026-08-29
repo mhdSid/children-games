@@ -1,32 +1,48 @@
 //! Load the Dump Truck.
 //!
-//! Drag rocks into the bed and a big numeral counts up. Tap the truck and the
-//! bed tips, the rocks tumble out one at a time, and the numeral counts back
-//! down — which is the actual point of the game.
+//! A sandbox, not a task. The truck drives, the world is wider than the
+//! screen, and rocks stay wherever they are dumped — so hauling twelve rocks
+//! from the quarry to a spot of his choosing builds a pile that is still there
+//! on the next trip. Nothing completes, nothing is scored, nothing is lost.
 //!
-//! There is no way to lose, no timer, and no error state. Dropping a rock
-//! somewhere silly just drops it on the ground, where it can be picked up
-//! again.
-//!
-//! Every measurement is a fraction of the live framebuffer, so the scene fills
-//! whatever shape it is handed.
+//! Design rules held throughout: no timer, no fail state, no error feedback,
+//! and every touch returns something. A rock released anywhere is simply on
+//! the ground there.
 
-use crate::engine::{clamp, fabs, height, width, Frame, Rgb, Rng, DOWN, MOVE, UP};
+use crate::engine::audio;
+use crate::engine::{clamp, fabs, height, lerp, sfx, width, Frame, Rgb, Rng, DOWN, MOVE, UP};
 use crate::games::Game;
 
-const ROCKS: usize = 5;
-const TIP_MAX: f32 = 0.62; // shear factor at full tip
+const ROCKS: usize = 12;
+const BED_SLOTS: usize = 4;
+const WORLD_SCALE: f32 = 3.2; // world is this many screens wide
+const TIP_MAX: f32 = 0.62;
+
+/// Unit vectors on an eighth turn, so wheels and tumbling rocks can rotate
+/// without `sin` or `cos` — neither of which exists in `core`.
+const SPIN: [(f32, f32); 8] = [
+    (1.0, 0.0),
+    (0.707, 0.707),
+    (0.0, 1.0),
+    (-0.707, 0.707),
+    (-1.0, 0.0),
+    (-0.707, -0.707),
+    (0.0, -1.0),
+    (0.707, -0.707),
+];
 
 // ------------------------------------------------------------------- colours
 
 const SKY: Rgb = (150, 190, 194);
 const SKY_BAND: Rgb = (163, 201, 203);
-const HILL: Rgb = (108, 146, 136);
 const CLOUD: Rgb = (191, 216, 216);
+const HILL_FAR: Rgb = (126, 160, 152);
+const HILL: Rgb = (108, 146, 136);
 const DIRT: Rgb = (134, 106, 68);
 const DIRT_TOP: Rgb = (158, 128, 84);
 const DIRT_SPECK: Rgb = (118, 92, 58);
-const DIRT_FORE: Rgb = (116, 90, 56);
+const QUARRY: Rgb = (112, 88, 58);
+const QUARRY_FACE: Rgb = (146, 118, 80);
 
 const BODY: Rgb = (201, 154, 46); // brass, straight from snake
 const BODY_DARK: Rgb = (158, 116, 26);
@@ -35,15 +51,26 @@ const CAB_C: Rgb = (200, 71, 31); // oxide
 const CAB_DARK: Rgb = (156, 50, 20);
 const GLASS: Rgb = (172, 208, 210);
 const GLASS_DARK: Rgb = (128, 168, 172);
+const LAMP: Rgb = (250, 232, 150);
+const LAMP_OFF: Rgb = (198, 168, 96);
 
 const TIRE: Rgb = (38, 44, 48);
 const HUB: Rgb = (186, 190, 194);
-const HUB_DARK: Rgb = (140, 144, 148);
+const LUG: Rgb = (120, 124, 128);
 
 const ROCK_C: Rgb = (129, 133, 137);
 const ROCK_LIGHT: Rgb = (166, 170, 174);
 const ROCK_DARK: Rgb = (94, 98, 102);
 const ROCK_HELD: Rgb = (233, 200, 120);
+const GEM: Rgb = (86, 160, 150);
+const GEM_LIGHT: Rgb = (140, 205, 194);
+
+const SMOKE: Rgb = (176, 186, 186);
+const DUST: Rgb = (186, 164, 130);
+const BIRD: Rgb = (66, 84, 90);
+const BUSH: Rgb = (86, 122, 92);
+const BUSH_DARK: Rgb = (66, 98, 72);
+const TRACK: Rgb = (120, 94, 60);
 
 const NUMERAL: Rgb = (36, 46, 52);
 const PIP_FULL: Rgb = (201, 154, 46);
@@ -51,92 +78,68 @@ const PIP_EMPTY: Rgb = (120, 152, 156);
 
 // -------------------------------------------------------------------- layout
 
-/// The whole scene, derived from the frame every time it is needed. Cheap
-/// enough to recompute and it means nothing is baked to one screen shape.
 struct L {
     w: f32,
     h: f32,
-    rock_r: f32,
-    grab_r: f32,
-    ground_y: f32,
-    fore_y: f32,
-    rest_y: f32,
-    bed_x: f32,
-    bed_y: f32,
+    u: f32, // short side; every vertical gap is a fraction of this
+    world_w: f32,
+    ground: f32,     // y where the wheels meet the dirt
+    rock_line: f32,  // rocks rest nearer the camera, below the wheel line
+    horizon: f32,
+    truck_w: f32,
     bed_w: f32,
     bed_h: f32,
-    wall: f32,
-    cab_x: f32,
-    cab_y: f32,
     cab_w: f32,
     cab_h: f32,
-    chassis_y: f32,
-    wheel_y: f32,
+    wall: f32,
     wheel_r: f32,
+    rock_r: f32,
 }
 
 fn layout() -> L {
     let w = width() as f32;
     let h = height() as f32;
-
-    // The scene is built up from the bottom, and every vertical gap is a
-    // fraction of the WIDTH. Keying them to the height instead would stretch
-    // the truck away from the rocks on a tall phone and leave a dead field of
-    // dirt between them; this way the composition stays tight and the extra
-    // height all goes to sky.
-    // Gaps scale with the short side. Using the width would collapse the
-    // scene on a wide, short frame: the horizon ends up above the top of the
-    // screen and there is no room left to draw a truck.
     let u = if w < h { w } else { h };
-    let rock_r = u * 0.052;
-    let rest_y = h - rock_r - u * 0.10;
-    let fore_y = rest_y - rock_r - u * 0.07;
-    let ground_y = fore_y - u * 0.14;
 
-    // The truck is a fixed shape scaled to the width, capped so it cannot
-    // overrun the sky on a short landscape frame.
+    // The horizon sits at a fraction of the height so sky and ground stay in
+    // proportion on any shape of screen. Anchoring it to the bottom instead
+    // crams the whole scene into a strip on a tall phone.
+    // Ground sits a fixed slice above the bottom rather than at a fraction of
+    // the height: on a tall phone a proportional split leaves a huge slab of
+    // empty brown, and sky with clouds in it reads far better than dirt.
+    let ground = h - u * 0.44;
+    let horizon = ground - u * 0.09;
+
+    // The world is 2.4 screens wide, so the truck does not have to be small to
+    // leave room to drive — it only has to fit above the horizon.
     let truck_w = {
-        let by_w = w * 0.80;
-        let by_h = ground_y * 1.25;
+        let by_w = w * 0.55;
+        let by_h = ground * 0.95;
         if by_w < by_h {
             by_w
         } else {
             by_h
         }
     };
-    let truck_x = (w - truck_w) * 0.5;
-
-    let bed_w = truck_w * 0.619;
-    let cab_w = truck_w * 0.351;
-    let bed_h = truck_w * 0.274;
-    let cab_h = truck_w * 0.351;
-    let wheel_r = truck_w * 0.101;
-
-    let wheel_y = ground_y + wheel_r * 0.24;
-    let chassis_y = wheel_y - wheel_r * 0.82;
 
     L {
         w,
         h,
-        rock_r,
-        // Grab radius is deliberately far larger than the rock. At this age
-        // the intent is what matters, not the precision.
-        grab_r: rock_r * 2.3,
-        ground_y,
-        fore_y,
-        rest_y,
-        bed_x: truck_x,
-        bed_y: chassis_y - bed_h - truck_w * 0.006,
-        bed_w,
-        bed_h,
+        u,
+        world_w: w * WORLD_SCALE,
+        ground,
+        // Rocks live slightly in front of the truck. On the same line they
+        // disappear behind the wheels and read as buried in the dirt.
+        rock_line: ground + u * 0.075,
+        horizon,
+        truck_w,
+        bed_w: truck_w * 0.619,
+        bed_h: truck_w * 0.274,
+        cab_w: truck_w * 0.351,
+        cab_h: truck_w * 0.351,
         wall: truck_w * 0.0357,
-        cab_x: truck_x + bed_w + truck_w * 0.030,
-        cab_y: chassis_y - cab_h,
-        cab_w,
-        cab_h,
-        chassis_y,
-        wheel_y,
-        wheel_r,
+        wheel_r: truck_w * 0.101,
+        rock_r: truck_w * 0.090,
     }
 }
 
@@ -146,7 +149,7 @@ fn layout() -> L {
 enum Rock {
     Ground,
     Held,
-    Seating, // flying to its slot in the bed
+    Seating,
     InBed,
     Falling,
 }
@@ -154,33 +157,72 @@ enum Rock {
 #[derive(Clone, Copy, PartialEq)]
 enum Tip {
     Idle,
+    Squat, // anticipation: the truck settles before the bed moves
     Raising,
     Holding,
     Lowering,
 }
 
+#[derive(Clone, Copy, PartialEq)]
+enum Grab {
+    None,
+    RockIdx(usize),
+    Truck,
+}
+
 pub struct DumpTruck {
+    // rocks, in world coordinates
     rx: [f32; ROCKS],
     ry: [f32; ROCKS],
     vx: [f32; ROCKS],
     vy: [f32; ROCKS],
     state: [Rock; ROCKS],
     slot: [usize; ROCKS],
-    facet: [u8; ROCKS], // which way the rock's highlight sits
+    facet: [u8; ROCKS],
+    size: [f32; ROCKS], // radius multiplier, so they are not all identical
+    spin: [f32; ROCKS],
+    special: [bool; ROCKS], // one of them is worth finding
 
-    held: i32, // index of the rock under the finger, -1 for none
-    grab_dx: f32,
-    grab_dy: f32,
+    // truck
+    tx: f32,
+    tv: f32,
+    wheel_a: f32,
+    susp: f32, // suspension offset, positive is compressed
+    susp_v: f32,
+    lamp: f32, // headlight flash, decays
 
+    // interaction
+    grab: Grab,
+    grab_off: f32,
+    grab_offy: f32,
+    moved_far: bool,
+    grab_x0: f32,
+    grab_y0: f32,
+
+    // bed
     tip: f32,
     phase: Tip,
     hold_t: f32,
     spill_t: f32,
 
+    // world
+    cam: f32,
+    shake: f32,
     count: u32,
-    loaded_best: u32,
+    pulse: f32,
+    hauled: u32,
+
+    // ambience
+    puff_t: f32,
+    puffs: [(f32, f32, f32); 6], // x, y, age
+    puff_i: usize,
+    bird_x: f32,
+    bird_y: f32,
+    bird_a: f32,
+
     accum: f32,
     moved: bool,
+    ready: bool,
 }
 
 impl DumpTruck {
@@ -193,36 +235,78 @@ impl DumpTruck {
             state: [Rock::Ground; ROCKS],
             slot: [0; ROCKS],
             facet: [0; ROCKS],
-            held: -1,
-            grab_dx: 0.0,
-            grab_dy: 0.0,
+            size: [1.0; ROCKS],
+            spin: [0.0; ROCKS],
+            special: [false; ROCKS],
+            tx: 0.0,
+            tv: 0.0,
+            wheel_a: 0.0,
+            susp: 0.0,
+            susp_v: 0.0,
+            lamp: 0.0,
+            grab: Grab::None,
+            grab_off: 0.0,
+            grab_offy: 0.0,
+            moved_far: false,
+            grab_x0: 0.0,
+            grab_y0: 0.0,
             tip: 0.0,
             phase: Tip::Idle,
             hold_t: 0.0,
             spill_t: 0.0,
+            cam: 0.0,
+            shake: 0.0,
             count: 0,
-            loaded_best: 0,
+            pulse: 0.0,
+            hauled: 0,
+            puff_t: 0.0,
+            puffs: [(0.0, 0.0, 9.0); 6],
+            puff_i: 0,
+            bird_x: 0.0,
+            bird_y: 0.0,
+            bird_a: 0.0,
             accum: 0.0,
             moved: false,
+            ready: false,
         }
     }
 
-    /// Where slot `s` sits, accounting for how far the bed is tipped.
+    // ------------------------------------------------------------- geometry
+
+    fn bed_x(&self, _l: &L) -> f32 {
+        self.tx
+    }
+    fn cab_x(&self, l: &L) -> f32 {
+        self.tx + l.bed_w + l.truck_w * 0.030
+    }
+    fn chassis_y(&self, l: &L) -> f32 {
+        l.ground + l.wheel_r * 0.24 - l.wheel_r * 0.82 + self.susp
+    }
+    fn bed_y(&self, l: &L) -> f32 {
+        self.chassis_y(l) - l.bed_h - l.truck_w * 0.006
+    }
+    fn cab_y(&self, l: &L) -> f32 {
+        self.chassis_y(l) - l.cab_h
+    }
+    fn truck_right(&self, l: &L) -> f32 {
+        self.cab_x(l) + l.cab_w
+    }
+
     fn slot_pos(&self, l: &L, s: usize) -> (f32, f32) {
         let across = l.bed_w - l.wall * 2.0 - l.rock_r * 2.0;
-        let x = l.bed_x + l.wall + l.rock_r + across * (s as f32 / (ROCKS - 1) as f32);
-        let y = l.bed_y + l.bed_h * 0.5;
-        // the bed shears upward toward the cab, so slots ride with it
-        (x, y - self.tip * (x - l.bed_x))
+        let x = self.bed_x(l)
+            + l.wall
+            + l.rock_r
+            + across * (s as f32 / (BED_SLOTS - 1) as f32);
+        let y = self.bed_y(l) + l.bed_h * 0.42;
+        (x, y - self.tip * (x - self.bed_x(l)))
     }
 
     fn free_slot(&self) -> Option<usize> {
-        for s in 0..ROCKS {
+        for s in 0..BED_SLOTS {
             let mut taken = false;
             for i in 0..ROCKS {
-                if (self.state[i] == Rock::InBed || self.state[i] == Rock::Seating)
-                    && self.slot[i] == s
-                {
+                if matches!(self.state[i], Rock::InBed | Rock::Seating) && self.slot[i] == s {
                     taken = true;
                     break;
                 }
@@ -234,79 +318,200 @@ impl DumpTruck {
         None
     }
 
-    /// Generous drop zone: anywhere over the bed, plus a wide margin above it.
+    fn in_bed_count(&self) -> u32 {
+        let mut n = 0;
+        for i in 0..ROCKS {
+            if matches!(self.state[i], Rock::InBed | Rock::Seating) {
+                n += 1;
+            }
+        }
+        n
+    }
+
+    /// Where a rock of radius `r` comes to rest at world x, sitting on the
+    /// ground or on top of whatever is already piled there. This is what makes
+    /// the world remember: dumped rocks stay, and they stack.
+    /// `from_y` is the height the rock is currently at. Only rocks strictly
+    /// BELOW it can hold it up — without that test two rocks at the same
+    /// height each stack on the other, every frame, and the pair climbs off
+    /// the top of the world at thirty pixels a frame.
+    fn rest_y(&self, l: &L, x: f32, from_y: f32, r: f32, ignore: usize) -> f32 {
+        let mut best = l.rock_line - r;
+        for j in 0..ROCKS {
+            if j == ignore || self.state[j] != Rock::Ground {
+                continue;
+            }
+            let rj = l.rock_r * self.size[j];
+            let reach = (r + rj) * 0.86;
+            if fabs(x - self.rx[j]) < reach && self.ry[j] > from_y + rj * 0.25 {
+                let cand = self.ry[j] - (r + rj) * 0.78;
+                if cand < best {
+                    best = cand;
+                }
+            }
+        }
+        best
+    }
+
     fn over_bed(&self, l: &L, x: f32, y: f32) -> bool {
-        let m = l.rock_r * 1.5;
-        x > l.bed_x - m
-            && x < l.bed_x + l.bed_w + m
-            && y > l.bed_y - l.bed_h
-            && y < l.bed_y + l.bed_h + m * 1.3
+        let m = l.rock_r * 1.6;
+        x > self.bed_x(l) - m
+            && x < self.bed_x(l) + l.bed_w + m
+            && y > self.bed_y(l) - l.bed_h * 1.4
+            && y < self.bed_y(l) + l.bed_h + m
     }
 
     fn on_truck(&self, l: &L, x: f32, y: f32) -> bool {
-        let m = l.rock_r * 0.5;
-        x > l.bed_x - m
-            && x < l.cab_x + l.cab_w + m
-            && y > l.cab_y - m
-            && y < l.ground_y + l.wheel_r
+        let m = l.rock_r * 0.4;
+        x > self.bed_x(l) - m
+            && x < self.truck_right(l) + m
+            && y > self.cab_y(l) - m
+            && y < l.ground + l.wheel_r
     }
 
-    fn start_tip(&mut self) {
-        if self.phase == Tip::Idle && self.count > 0 {
-            self.phase = Tip::Raising;
-            self.spill_t = 0.0;
-        }
+    fn on_cab(&self, l: &L, x: f32, y: f32) -> bool {
+        x > self.cab_x(l) && x < self.truck_right(l) && y > self.cab_y(l) && y < self.chassis_y(l)
     }
 
-    fn scatter(&mut self, l: &L, rng: &mut Rng) {
+    // ---------------------------------------------------------------- setup
+
+    fn deal(&mut self, l: &L, rng: &mut Rng) {
+        // The quarry is the left end of the world; the rest is open ground to
+        // build on.
         for i in 0..ROCKS {
+            self.size[i] = 0.78 + rng.unit() * 0.5;
+            self.facet[i] = (rng.next() % 4) as u8;
+            self.spin[i] = 0.0;
+            self.special[i] = false;
             self.state[i] = Rock::Ground;
-            self.rx[i] = l.w * (i as f32 + 0.5) / ROCKS as f32;
-            self.ry[i] = l.rest_y;
             self.vx[i] = 0.0;
             self.vy[i] = 0.0;
             self.slot[i] = 0;
-            self.facet[i] = (rng.next() % 4) as u8;
+
+            // Spacing must clear the widest pair, or the stacking rule reads
+            // them as piled on each other and builds a staircase instead of
+            // laying them out. Biggest rock is 1.28r; 3.3r also leaves gaps to
+            // see the truck through. The field fills the left of the world and
+            // leaves the right open — somewhere to haul TO.
+            self.rx[i] = l.rock_r * 2.0 + i as f32 * l.rock_r * 3.3;
+            self.ry[i] = l.rock_line - l.rock_r * self.size[i];
+        }
+        // One rock is worth finding on the fiftieth play.
+        self.special[(rng.next() as usize) % ROCKS] = true;
+
+        // Park the truck in the middle of the quarry, so the first thing on
+        // screen is a truck surrounded by rocks.
+        let field_mid = (self.rx[0] + self.rx[ROCKS - 1]) * 0.5;
+        self.tx = clamp(field_mid - l.truck_w * 0.5, 0.0, l.world_w - l.truck_w);
+        self.tv = 0.0;
+        self.susp = 0.0;
+        self.susp_v = 0.0;
+        self.wheel_a = 0.0;
+        self.cam = clamp(self.tx + l.truck_w * 0.5 - l.w * 0.5, 0.0, l.world_w - l.w);
+        self.count = 0;
+        self.ready = true;
+    }
+
+
+    fn start_tip(&mut self) {
+        if self.phase == Tip::Idle && self.in_bed_count() > 0 {
+            self.phase = Tip::Squat;
+            self.hold_t = 0.0;
+            self.spill_t = 0.0;
+            // anticipation: the truck settles on its springs before it lifts
+            self.susp_v += 220.0;
+            sfx(audio::TIP, 1.0);
         }
     }
 
-    /// Push overlapping ground rocks apart along x only — no square roots, and
-    /// chunky rocks resting slightly wrong looks fine.
-    fn separate(&mut self, l: &L) {
-        for _ in 0..2 {
-            for a in 0..ROCKS {
-                if self.state[a] != Rock::Ground {
-                    continue;
-                }
-                for b in (a + 1)..ROCKS {
-                    if self.state[b] != Rock::Ground {
-                        continue;
-                    }
-                    let d = self.rx[b] - self.rx[a];
-                    let min = l.rock_r * 2.0 - 4.0;
-                    if fabs(d) < min {
-                        let push = (min - fabs(d)) * 0.5;
-                        let dir = if d < 0.0 { -1.0 } else { 1.0 };
-                        self.rx[a] -= push * dir;
-                        self.rx[b] += push * dir;
-                    }
-                }
-            }
-        }
-        for i in 0..ROCKS {
-            if self.state[i] == Rock::Ground {
-                self.rx[i] = clamp(self.rx[i], l.rock_r + 4.0, l.w - l.rock_r - 4.0);
-            }
-        }
+    fn puff(&mut self, x: f32, y: f32) {
+        self.puffs[self.puff_i] = (x, y, 0.0);
+        self.puff_i = (self.puff_i + 1) % self.puffs.len();
     }
+
+    // ----------------------------------------------------------------- step
 
     fn step(&mut self, l: &L, dt: f32, rng: &mut Rng) {
         let s = dt / 1000.0;
 
+        // ------------------------------------------------------- suspension
+        // A spring with damping. Every impact pushes it; it settles on its own.
+        self.susp_v += -self.susp * 260.0 * s;
+        self.susp_v *= 1.0 - 6.0 * s;
+        self.susp += self.susp_v * s;
+        self.susp = clamp(self.susp, -l.wheel_r * 0.5, l.wheel_r * 0.5);
+
+        self.lamp = if self.lamp > 0.0 { self.lamp - s * 1.6 } else { 0.0 };
+        self.pulse = if self.pulse > 0.0 { self.pulse - s * 2.2 } else { 0.0 };
+        self.shake = if self.shake > 0.0 { self.shake - s * 5.0 } else { 0.0 };
+
+        // ---------------------------------------------------------- driving
+        if self.grab != Grab::Truck {
+            // coast to a stop when he lets go
+            self.tv *= 1.0 - 3.4 * s;
+            self.tx += self.tv * s;
+            self.tx = clamp(self.tx, 0.0, l.world_w - l.truck_w);
+        }
+        self.wheel_a += self.tv * s / (l.wheel_r * 0.9);
+
+        // engine note follows speed; the host holds one oscillator for this
+        let speed = {
+            let v = fabs(self.tv) / (l.w * 0.9);
+            if v > 1.0 {
+                1.0
+            } else {
+                v
+            }
+        };
+        sfx(audio::ENGINE, speed);
+        sfx(
+            audio::REVERSE,
+            if self.tv < -l.w * 0.06 { 1.0 } else { 0.0 },
+        );
+
+        // exhaust, always, so an untouched screen is never a still image
+        self.puff_t += s;
+        let rate = 0.42 - speed * 0.28;
+        if self.puff_t > rate {
+            self.puff_t = 0.0;
+            let px = self.cab_x(l) + l.cab_w * 0.18;
+            let py = self.cab_y(l) - l.u * 0.012;
+            self.puff(px, py);
+        }
+        for p in self.puffs.iter_mut() {
+            if p.2 < 2.0 {
+                p.2 += s;
+                p.1 -= l.u * 0.055 * s;
+                p.0 += l.u * 0.012 * s;
+            }
+        }
+
+        // a bird crosses now and then
+        if self.bird_a <= 0.0 {
+            if rng.unit() < 0.004 {
+                self.bird_a = 1.0;
+                self.bird_x = self.cam - l.u * 0.1;
+                self.bird_y = l.u * (0.12 + rng.unit() * 0.2);
+            }
+        } else {
+            self.bird_x += l.u * 0.16 * s;
+            self.bird_y -= l.u * 0.01 * s;
+            if self.bird_x > self.cam + l.w + l.u * 0.1 {
+                self.bird_a = 0.0;
+            }
+        }
+
         // ---------------------------------------------------------- tipping
         match self.phase {
+            Tip::Squat => {
+                self.hold_t += s;
+                if self.hold_t > 0.22 {
+                    self.phase = Tip::Raising;
+                }
+                self.moved = true;
+            }
             Tip::Raising => {
-                self.tip += s * 1.5 * TIP_MAX;
+                self.tip += s * 1.35 * TIP_MAX;
                 if self.tip >= TIP_MAX {
                     self.tip = TIP_MAX;
                     self.phase = Tip::Holding;
@@ -316,31 +521,31 @@ impl DumpTruck {
             }
             Tip::Holding => {
                 self.hold_t += s;
-                if self.hold_t > 0.55 && self.count == 0 {
+                if self.hold_t > 0.5 && self.in_bed_count() == 0 {
                     self.phase = Tip::Lowering;
                 }
                 self.moved = true;
             }
             Tip::Lowering => {
-                self.tip -= s * 1.3 * TIP_MAX;
+                self.tip -= s * 1.15 * TIP_MAX;
                 if self.tip <= 0.0 {
                     self.tip = 0.0;
                     self.phase = Tip::Idle;
+                    self.susp_v += 90.0; // the bed lands back on the frame
                 }
                 self.moved = true;
             }
             Tip::Idle => {}
         }
 
-        // Once the bed is well past halfway, rocks leave one at a time so the
-        // numeral ticks 5, 4, 3, 2, 1, 0 instead of dropping straight to zero.
-        if (self.phase == Tip::Raising || self.phase == Tip::Holding) && self.tip > TIP_MAX * 0.5 {
+        // Rocks leave one at a time so the numeral ticks down rather than
+        // snapping to zero. That tick is the whole counting lesson.
+        if matches!(self.phase, Tip::Raising | Tip::Holding) && self.tip > TIP_MAX * 0.45 {
             self.spill_t += s;
-            if self.spill_t > 0.13 {
+            if self.spill_t > 0.16 {
                 self.spill_t = 0.0;
-                // spill the rock nearest the open (left) end first
                 let mut pick = -1i32;
-                let mut best = l.w * 2.0;
+                let mut best = l.world_w * 2.0;
                 for i in 0..ROCKS {
                     if self.state[i] == Rock::InBed {
                         let (sx, _) = self.slot_pos(l, self.slot[i]);
@@ -353,11 +558,9 @@ impl DumpTruck {
                 if pick >= 0 {
                     let i = pick as usize;
                     self.state[i] = Rock::Falling;
-                    self.vx[i] = -(l.w * 0.15) - rng.unit() * l.w * 0.12;
-                    self.vy[i] = -(l.h * 0.06) - rng.unit() * l.h * 0.08;
-                    if self.count > 0 {
-                        self.count -= 1;
-                    }
+                    self.vx[i] = -(l.u * 0.18) - rng.unit() * l.u * 0.14;
+                    self.vy[i] = -(l.u * 0.06) - rng.unit() * l.u * 0.06;
+                    self.set_count(self.count.saturating_sub(1));
                     self.moved = true;
                 }
             }
@@ -365,35 +568,45 @@ impl DumpTruck {
 
         // ---------------------------------------------------------- physics
         for i in 0..ROCKS {
+            let r = l.rock_r * self.size[i];
             match self.state[i] {
                 Rock::Falling => {
-                    self.vy[i] += l.h * 2.9 * s;
+                    self.vy[i] += l.u * 3.4 * s;
                     self.rx[i] += self.vx[i] * s;
                     self.ry[i] += self.vy[i] * s;
-                    self.vx[i] *= 1.0 - 1.6 * s;
+                    self.vx[i] *= 1.0 - 1.5 * s;
+                    self.spin[i] += self.vx[i] * s * 0.06;
 
-                    if self.ry[i] >= l.rest_y {
-                        self.ry[i] = l.rest_y;
-                        if self.vy[i] > l.h * 0.4 {
-                            self.vy[i] = -self.vy[i] * 0.32; // one small bounce
-                            self.vx[i] *= 0.6;
+                    let floor = self.rest_y(l, self.rx[i], self.ry[i], r, i);
+                    if self.ry[i] >= floor {
+                        self.ry[i] = floor;
+                        let impact = fabs(self.vy[i]) / (l.u * 0.9);
+                        if fabs(self.vy[i]) > l.u * 0.35 {
+                            self.vy[i] = -self.vy[i] * 0.30;
+                            self.vx[i] *= 0.55;
+                            sfx(audio::LAND, if impact > 1.0 { 1.0 } else { impact });
+                            self.shake = if impact > 0.6 { 0.6 } else { impact };
+                            self.puff(self.rx[i], self.ry[i] + r * 0.6);
                         } else {
                             self.vy[i] = 0.0;
                             self.vx[i] = 0.0;
                             self.state[i] = Rock::Ground;
+                            self.hauled += 1;
                         }
                     }
-                    self.rx[i] = clamp(self.rx[i], l.rock_r + 4.0, l.w - l.rock_r - 4.0);
+                    self.rx[i] = clamp(self.rx[i], r + 2.0, l.world_w - r - 2.0);
                     self.moved = true;
                 }
                 Rock::Seating => {
                     let (tx, ty) = self.slot_pos(l, self.slot[i]);
-                    self.rx[i] += (tx - self.rx[i]) * 14.0 * s;
-                    self.ry[i] += (ty - self.ry[i]) * 14.0 * s;
-                    if fabs(tx - self.rx[i]) < 1.5 && fabs(ty - self.ry[i]) < 1.5 {
+                    self.rx[i] += (tx - self.rx[i]) * 15.0 * s;
+                    self.ry[i] += (ty - self.ry[i]) * 15.0 * s;
+                    if fabs(tx - self.rx[i]) < 2.0 && fabs(ty - self.ry[i]) < 2.0 {
                         self.rx[i] = tx;
                         self.ry[i] = ty;
                         self.state[i] = Rock::InBed;
+                        self.susp_v += 130.0 * self.size[i]; // the truck feels it
+                        sfx(audio::SEAT, self.size[i]);
                     }
                     self.moved = true;
                 }
@@ -406,28 +619,71 @@ impl DumpTruck {
             }
         }
 
-        self.separate(l);
+        // No sideways separation pass here, on purpose. Nudging settled rocks
+        // apart fights the stacking rule — a rock gets pushed aside, drops
+        // because it no longer overlaps anything, then gets pushed again — and
+        // a pile ratchets itself across the world a pixel at a time. That is
+        // what made dumped rocks wander off. Overlapping rocks are meant to
+        // stack, which rest_y already does.
+        for i in 0..ROCKS {
+            if self.state[i] == Rock::Ground {
+                let r = l.rock_r * self.size[i];
+                let floor = self.rest_y(l, self.rx[i], self.ry[i], r, i);
+                // let settled rocks fall if the pile under them moved
+                if self.ry[i] < floor - 0.5 {
+                    self.ry[i] += (floor - self.ry[i]) * 9.0 * s;
+                    self.moved = true;
+                } else {
+                    self.ry[i] = floor;
+                }
+            }
+        }
+
+        // ----------------------------------------------------------- camera
+        // Leads slightly in the direction of travel, the way a chase camera
+        // does, and never shows past the ends of the world.
+        let lead = clamp(self.tv * 0.35, -l.w * 0.16, l.w * 0.16);
+        let want = clamp(
+            self.tx + l.truck_w * 0.5 - l.w * 0.5 + lead,
+            0.0,
+            l.world_w - l.w,
+        );
+        self.cam += (want - self.cam) * 4.0 * s;
+    }
+
+    fn set_count(&mut self, n: u32) {
+        if n != self.count {
+            self.count = n;
+            self.pulse = 1.0;
+            sfx(audio::COUNT, n as f32);
+        }
     }
 }
 
 impl Game for DumpTruck {
     fn reset(&mut self, rng: &mut Rng) {
         let l = layout();
-        self.held = -1;
+        self.grab = Grab::None;
         self.tip = 0.0;
         self.phase = Tip::Idle;
         self.hold_t = 0.0;
         self.spill_t = 0.0;
-        self.count = 0;
+        self.pulse = 0.0;
+        self.shake = 0.0;
+        self.lamp = 0.0;
+        self.hauled = 0;
         self.accum = 0.0;
-        self.scatter(&l, rng);
+        self.bird_a = 0.0;
+        self.puffs = [(0.0, 0.0, 9.0); 6];
+        self.deal(&l, rng);
     }
 
     fn update(&mut self, dt: f32, rng: &mut Rng) -> bool {
         let l = layout();
+        if !self.ready {
+            self.deal(&l, rng);
+        }
         self.moved = false;
-        // Fixed timestep, same accumulator idea as snake: identical behaviour
-        // on a 60 Hz and a 120 Hz display.
         self.accum += if dt > 100.0 { 100.0 } else { dt };
         while self.accum >= 16.0 {
             self.accum -= 16.0;
@@ -436,22 +692,27 @@ impl Game for DumpTruck {
         self.moved
     }
 
-    fn pointer(&mut self, x: f32, y: f32, phase: u32, _rng: &mut Rng) {
+    fn pointer(&mut self, sx: f32, sy: f32, phase: u32, _rng: &mut Rng) {
         let l = layout();
+        let x = sx + self.cam; // screen space into world space
+        let y = sy;
+
         match phase {
             DOWN => {
+                self.moved_far = false;
+                self.grab_x0 = x;
+                self.grab_y0 = y;
+
                 // Nearest grabbable rock wins, by squared distance — no sqrt.
                 let mut pick = -1i32;
-                let mut best = l.grab_r * l.grab_r;
+                let mut best = (l.rock_r * 2.4) * (l.rock_r * 2.4);
                 for i in 0..ROCKS {
-                    // Ground rocks can always be picked up, even mid-dump —
-                    // waiting out the tipping animation feels broken to a
-                    // toddler. Rocks in the bed are only grabbable at rest.
-                    let grabbable = match self.state[i] {
-                        Rock::Ground => true,
-                        Rock::InBed => self.phase == Tip::Idle,
-                        _ => false,
-                    };
+                    // Only rocks on the ground. A rock in the bed must not be
+                    // grabbable: it sits exactly where the hand lands to drive
+                    // the truck, so it would steal every drive and every tap.
+                    // A loaded bed is emptied by tipping it, which is also how
+                    // the real thing works.
+                    let grabbable = self.state[i] == Rock::Ground;
                     if !grabbable {
                         continue;
                     }
@@ -466,49 +727,89 @@ impl Game for DumpTruck {
 
                 if pick >= 0 {
                     let i = pick as usize;
-                    if self.state[i] == Rock::InBed && self.count > 0 {
-                        self.count -= 1;
-                    }
                     self.state[i] = Rock::Held;
-                    self.held = pick;
-                    self.grab_dx = self.rx[i] - x;
-                    self.grab_dy = self.ry[i] - y;
+                    self.grab = Grab::RockIdx(i);
+                    self.grab_off = self.rx[i] - x;
+                    self.grab_offy = self.ry[i] - y;
+                    sfx(audio::PICKUP, self.size[i]);
                     self.moved = true;
                 } else if self.on_truck(&l, x, y) {
-                    self.start_tip();
-                }
-            }
-            MOVE => {
-                if self.held >= 0 {
-                    let i = self.held as usize;
-                    self.rx[i] = clamp(x + self.grab_dx, l.rock_r, l.w - l.rock_r);
-                    self.ry[i] = clamp(y + self.grab_dy, l.rock_r, l.rest_y);
+                    // Drag to drive, tap to tip — decided on release.
+                    self.grab = Grab::Truck;
+                    self.grab_off = self.tx - x;
+                    self.tv = 0.0;
+                } else {
+                    // No dead pixels: a touch on nothing still does something.
+                    self.puff(x, y);
                     self.moved = true;
                 }
             }
+
+            MOVE => match self.grab {
+                Grab::RockIdx(i) => {
+                    let r = l.rock_r * self.size[i];
+                    self.rx[i] = clamp(x + self.grab_off, r, l.world_w - r);
+                    self.ry[i] = clamp(y + self.grab_offy, r, l.rock_line - r);
+                    if fabs(x - self.grab_x0) + fabs(y - self.grab_y0) > l.u * 0.022 {
+                        self.moved_far = true;
+                    }
+                    self.moved = true;
+                }
+                Grab::Truck => {
+                    let want = clamp(x + self.grab_off, 0.0, l.world_w - l.truck_w);
+                    let dx = want - self.tx;
+                    // Drag versus tap is decided by how far the FINGER moved,
+                    // not the truck. Judging it by the truck means that once
+                    // it is pinned against the end of the world every push
+                    // reads as a tap and tips the load out by surprise.
+                    if fabs(x - self.grab_x0) > l.u * 0.022 {
+                        self.moved_far = true;
+                    }
+                    // velocity comes from the drag, so the wheels and the
+                    // engine note follow the hand
+                    self.tv = dx * 60.0;
+                    self.tx = want;
+                    self.moved = true;
+                }
+                Grab::None => {}
+            },
+
             UP => {
-                if self.held >= 0 {
-                    let i = self.held as usize;
-                    if self.over_bed(&l, x, y) && self.phase == Tip::Idle {
-                        if let Some(s) = self.free_slot() {
+                match self.grab {
+                    Grab::RockIdx(i) => {
+                        if self.over_bed(&l, x, y)
+                            && self.phase == Tip::Idle
+                            && self.free_slot().is_some()
+                        {
+                            let s = self.free_slot().unwrap();
                             self.slot[i] = s;
                             self.state[i] = Rock::Seating;
-                            self.count += 1;
-                            if self.count > self.loaded_best {
-                                self.loaded_best = self.count;
-                            }
+                            self.set_count(self.count + 1);
                         } else {
+                            // Anywhere else is simply "on the ground". Never
+                            // wrong, never refused.
                             self.state[i] = Rock::Falling;
+                            if !self.moved_far {
+                                self.vy[i] = 0.0;
+                            }
                         }
-                    } else {
-                        // Anywhere else is simply "on the ground". Never wrong.
-                        self.state[i] = Rock::Falling;
-                        self.vx[i] = 0.0;
-                        self.vy[i] = 0.0;
                     }
-                    self.held = -1;
-                    self.moved = true;
+                    Grab::Truck => {
+                        if !self.moved_far {
+                            // it was a tap
+                            if self.on_cab(&l, x, y) {
+                                sfx(audio::HORN, 1.0);
+                                self.lamp = 1.0;
+                                self.susp_v += 60.0;
+                            } else {
+                                self.start_tip();
+                            }
+                        }
+                    }
+                    Grab::None => {}
                 }
+                self.grab = Grab::None;
+                self.moved = true;
             }
             _ => {}
         }
@@ -519,154 +820,304 @@ impl Game for DumpTruck {
     }
 
     fn best(&self) -> u32 {
-        self.loaded_best
+        self.hauled
     }
 
     fn draw(&mut self, fb: &mut Frame) {
         let l = layout();
         let (w, h) = (l.w as i32, l.h as i32);
 
-        // ------------------------------------------------------------ world
+        // Camera shake on impact, a couple of pixels at most.
+        let sh = if self.shake > 0.0 {
+            (self.shake * l.u * 0.012) as i32
+        } else {
+            0
+        };
+        let cam = self.cam;
+        // world x -> screen x
+        let sx = |x: f32| (x - cam) as i32;
+
+        // ------------------------------------------------------------- sky
         fb.fill(SKY);
 
-        // Clouds, placed in whatever sky the frame actually has above the cab.
-        let sky = l.cab_y;
-        let u0 = if l.w < l.h { l.w } else { l.h };
-        if sky > u0 * 0.22 {
-            cloud(fb, l.w * 0.26, sky * 0.30, u0 * 0.075);
-            cloud(fb, l.w * 0.72, sky * 0.56, u0 * 0.055);
+        let sky_top = self.cab_y(&l);
+        if sky_top > l.u * 0.22 {
+            // parallax: distant things move less than the ground
+            cloud(fb, (l.w * 0.26 - cam * 0.15) as f32, sky_top * 0.28, l.u * 0.075);
+            cloud(fb, (l.w * 0.95 - cam * 0.15) as f32, sky_top * 0.52, l.u * 0.055);
+            cloud(fb, (l.w * 1.8 - cam * 0.15) as f32, sky_top * 0.36, l.u * 0.065);
         }
 
-        // A haze band sitting just above the horizon.
-        let u = if l.w < l.h { l.w } else { l.h };
-        fb.rect(0, (l.ground_y - u * 0.30) as i32, w, (u * 0.13) as i32, SKY_BAND);
+        if self.bird_a > 0.0 {
+            let bx = sx(self.bird_x);
+            let by = self.bird_y as i32;
+            let f = ((self.bird_x / (l.u * 0.06)) as i32) % 2;
+            let sp = (l.u * 0.016) as i32 + 1;
+            fb.rect(bx - sp, by - if f == 0 { sp } else { 0 }, sp, 2, BIRD);
+            fb.rect(bx + 1, by - if f == 0 { sp } else { 0 }, sp, 2, BIRD);
+        }
 
+        fb.rect(0, (l.horizon - l.u * 0.14) as i32, w, (l.u * 0.10) as i32, SKY_BAND);
+
+        // far hills, slower than the ground
+        let far = cam * 0.35;
         fb.disc(
-            (l.w * 0.20) as i32,
-            (l.ground_y + u * 0.04) as i32,
-            (u * 0.31) as i32,
+            (l.w * 0.32 - far) as i32,
+            (l.horizon + l.u * 0.10) as i32,
+            (l.u * 0.30) as i32,
+            HILL_FAR,
+        );
+        fb.disc(
+            (l.w * 1.30 - far) as i32,
+            (l.horizon + l.u * 0.08) as i32,
+            (l.u * 0.26) as i32,
+            HILL_FAR,
+        );
+        let near = cam * 0.62;
+        fb.disc(
+            (l.w * 0.85 - near) as i32,
+            (l.horizon + l.u * 0.12) as i32,
+            (l.u * 0.24) as i32,
             HILL,
         );
         fb.disc(
-            (l.w * 0.78) as i32,
-            (l.ground_y + u * 0.06) as i32,
-            (u * 0.275) as i32,
+            (l.w * 1.75 - near) as i32,
+            (l.horizon + l.u * 0.11) as i32,
+            (l.u * 0.22) as i32,
             HILL,
         );
 
-        let dirt_top = (l.ground_y + l.wheel_r * 0.24) as i32;
-        fb.rect(0, dirt_top, w, h, DIRT);
-        fb.rect(0, dirt_top, w, (l.h * 0.018) as i32, DIRT_TOP);
+        // ---------------------------------------------------------- ground
+        let gy = l.ground as i32 + sh;
+        fb.rect(0, gy, w, h, DIRT);
+        fb.rect(0, gy, w, (l.u * 0.016) as i32, DIRT_TOP);
 
-        // A darker near bank, so the rock row reads as being in front of the
-        // truck rather than beside it.
-        fb.rect(0, l.fore_y as i32, w, h, DIRT_FORE);
-        fb.rect(0, l.fore_y as i32, w, (l.h * 0.013) as i32, DIRT_TOP);
-
-        // scattered grit in both bands, so neither is a flat slab
-        let mut sx = 14;
-        while sx < w {
-            fb.rect(sx, dirt_top + 18 + (sx % 23), 7, 4, DIRT_SPECK);
-            fb.rect(sx + 11, l.fore_y as i32 + 16 + (sx % 19), 6, 4, DIRT_SPECK);
-            sx += 37;
+        // the quarry face at the left end of the world
+        // The quarry floor is the left end of the world: darker, dug out.
+        let qx = sx(l.w * 0.52);
+        if qx > 0 {
+            let lip = (l.u * 0.05) as i32;
+            fb.rect(0, gy, qx, lip, QUARRY_FACE);
+            fb.rect(0, gy + lip, qx, h, QUARRY);
         }
 
-        // ------------------------------------------------------------ truck
+        fb.rect(0, (l.rock_line - l.u * 0.028) as i32 + sh, w, h, DIRT);
         fb.rect(
-            l.bed_x as i32 + 6,
-            l.chassis_y as i32,
-            (l.cab_x + l.cab_w - l.bed_x) as i32 - 12,
+            0,
+            (l.rock_line - l.u * 0.028) as i32 + sh,
+            w,
+            (l.u * 0.010) as i32,
+            DIRT_TOP,
+        );
+
+        // Bushes at fixed world spots: landmarks, so driving somewhere means
+        // arriving somewhere rather than watching a brown line scroll.
+        let bush_r = l.u * 0.035;
+        let mut b = l.w * 0.95;
+        while b < l.world_w {
+            let bx = sx(b);
+            if bx > -80 && bx < w + 80 {
+                let by = (l.ground - bush_r * 0.55) as i32 + sh;
+                fb.disc(bx - (bush_r * 0.8) as i32, by, (bush_r * 0.75) as i32, BUSH_DARK);
+                fb.disc(bx + (bush_r * 0.8) as i32, by, (bush_r * 0.7) as i32, BUSH_DARK);
+                fb.disc(bx, by - (bush_r * 0.4) as i32, bush_r as i32, BUSH);
+            }
+            b += l.w * 0.62;
+        }
+
+        let mut g = 0;
+        while g < l.world_w as i32 {
+            let px = sx(g as f32);
+            if px > -20 && px < w + 20 {
+                fb.rect(px, gy + 10 + (g % 17), 7, 4, DIRT_SPECK);
+                // tyre tracks along the near dirt
+                fb.rect(px, (l.rock_line + l.u * 0.045) as i32 + sh, 16, 4, TRACK);
+                fb.rect(px + 6, (l.rock_line + l.u * 0.085) as i32 + sh, 12, 3, TRACK);
+            }
+            g += 34;
+        }
+
+        // ----------------------------------------------------------- truck
+        self.draw_truck(fb, &l, sh);
+
+        // Rocks on the ground and in the air are drawn after the truck: they
+        // are in front of it, which is what makes them findable and grabbable
+        // instead of hidden behind a wheel.
+        for i in 0..ROCKS {
+            if matches!(self.state[i], Rock::Ground | Rock::Falling) {
+                self.draw_rock(fb, &l, i, sx(self.rx[i]), self.ry[i] as i32 + sh, false);
+            }
+        }
+        if let Grab::RockIdx(i) = self.grab {
+            self.draw_rock(fb, &l, i, sx(self.rx[i]), self.ry[i] as i32, true);
+        }
+
+        // ---------------------------------------------------------- puffs
+        // No alpha in the framebuffer, so a puff fades by being blended
+        // toward whatever it sits in front of — sky above the horizon, dirt
+        // below it. Otherwise it just turns into an opaque blob and stops.
+        for p in self.puffs.iter() {
+            if p.2 < 1.8 {
+                let t = ((p.2 / 1.8) * 255.0) as u32;
+                let r = (l.u * 0.010 + p.2 * l.u * 0.013) as i32;
+                if r <= 0 {
+                    continue;
+                }
+                let (from, to) = if p.1 < l.ground {
+                    (SMOKE, SKY)
+                } else {
+                    (DUST, DIRT)
+                };
+                let c = (
+                    lerp(from.0, to.0, t),
+                    lerp(from.1, to.1, t),
+                    lerp(from.2, to.2, t),
+                );
+                fb.disc(sx(p.0), p.1 as i32, r, c);
+            }
+        }
+
+        // -------------------------------------------------------------- UI
+        let base = (l.u * 0.040) as i32;
+        let bump = (self.pulse * l.u * 0.010) as i32;
+        let scale = base + bump; // the number pulses when it changes
+        let pad = (l.u * 0.05) as i32;
+        fb.number(pad, pad, self.count, scale, NUMERAL);
+
+        // capacity pips: how many more fit, without needing numbers
+        let pip = (l.u * 0.026) as i32;
+        for s in 0..BED_SLOTS {
+            let c = if s < self.count as usize {
+                PIP_FULL
+            } else {
+                PIP_EMPTY
+            };
+            fb.disc(pad + base * 5 + s as i32 * pip * 3, pad + base * 2, pip, c);
+        }
+    }
+}
+
+impl DumpTruck {
+    fn draw_truck(&self, fb: &mut Frame, l: &L, sh: i32) {
+        let bx = (self.bed_x(l) - self.cam) as i32;
+        let cx = (self.cab_x(l) - self.cam) as i32;
+        let by = self.bed_y(l) as i32 + sh;
+        let cy = self.cab_y(l) as i32 + sh;
+        let ch_y = self.chassis_y(l) as i32 + sh;
+        let (bw, bh) = (l.bed_w as i32, l.bed_h as i32);
+        let (cw, ch) = (l.cab_w as i32, l.cab_h as i32);
+        let wall = l.wall as i32;
+        let near = (l.bed_h * 0.326) as i32;
+        let wr = l.wheel_r as i32;
+
+        // chassis rail
+        fb.rect(
+            bx + 6,
+            ch_y,
+            (self.truck_right(l) - self.bed_x(l)) as i32 - 12,
             (l.wheel_r * 0.58) as i32,
             BODY_DARK,
         );
 
+        // wheels, with lugs that turn as it drives
+        let wy = (l.ground + l.wheel_r * 0.24) as i32 + sh;
         let wheels = [
-            l.bed_x + l.bed_w * 0.375,
-            l.bed_x + l.bed_w * 0.75,
-            l.cab_x + l.cab_w * 0.457,
+            self.bed_x(l) + l.bed_w * 0.30,
+            self.bed_x(l) + l.bed_w * 0.72,
+            self.cab_x(l) + l.cab_w * 0.46,
         ];
         for &wx in &wheels {
-            fb.disc(wx as i32, l.wheel_y as i32, l.wheel_r as i32, TIRE);
-            fb.disc(wx as i32, l.wheel_y as i32, (l.wheel_r * 0.46) as i32, HUB);
-            fb.disc(wx as i32, l.wheel_y as i32, (l.wheel_r * 0.20) as i32, HUB_DARK);
+            let px = (wx - self.cam) as i32;
+            fb.disc(px, wy, wr, TIRE);
+            fb.disc(px, wy, (l.wheel_r * 0.46) as i32, HUB);
+            // three lugs on an eighth-turn table: rotation without trig
+            let base = (self.wheel_a * 1.27) as i32;
+            for k in 0..3 {
+                let (dx, dy) = SPIN[(((base + k * 3) % 8) + 8) as usize % 8];
+                fb.rect(
+                    px + (dx * l.wheel_r * 0.26) as i32 - 2,
+                    wy + (dy * l.wheel_r * 0.26) as i32 - 2,
+                    4,
+                    4,
+                    LUG,
+                );
+            }
         }
 
         // cab
-        let (cx, cy, cw, ch) = (
-            l.cab_x as i32,
-            l.cab_y as i32,
-            l.cab_w as i32,
-            l.cab_h as i32,
-        );
         fb.rect(cx, cy, cw, ch, CAB_C);
         fb.rect(cx, cy + ch - ch / 8, cw, ch / 8, CAB_DARK);
         fb.rect(cx + cw / 7, cy + ch / 6, cw - cw / 3, ch / 3, GLASS);
         fb.rect(cx + cw / 7, cy + ch / 6 + ch / 4, cw - cw / 3, ch / 10, GLASS_DARK);
-        fb.rect(cx + cw - cw / 16, cy + ch * 5 / 8, cw / 10, ch / 7, BODY_LIGHT);
-
-        // bed — sheared upward toward the cab as it tips
-        let k = self.tip;
-        let (bx, by, bw, bh) = (
-            l.bed_x as i32,
-            l.bed_y as i32,
-            l.bed_w as i32,
-            l.bed_h as i32,
+        fb.rect(
+            cx + cw - cw / 14,
+            cy + ch * 5 / 8,
+            cw / 9,
+            ch / 7,
+            if self.lamp > 0.0 { LAMP } else { LAMP_OFF },
         );
-        let wall = l.wall as i32;
-        let near = (l.bed_h * 0.326) as i32;
+        // exhaust stack
+        fb.rect(cx + cw / 6, cy - (l.u * 0.020) as i32, cw / 12, (l.u * 0.022) as i32, BODY_DARK);
 
-        // Back panel first — the inside of the box, so it sits darker.
+        // bed: back panel, load, then the near wall closes over it so the
+        // rocks read as being down inside rather than balanced on top
+        let k = self.tip;
         fb.shear_rect(bx, by, bw, bh, k, BODY_DARK);
-
-        // Rocks in the bed go next, so the near wall can close over them.
         for i in 0..ROCKS {
-            if self.state[i] == Rock::InBed || self.state[i] == Rock::Seating {
-                draw_rock(fb, l.rock_r, self.rx[i], self.ry[i], self.facet[i], false);
+            if matches!(self.state[i], Rock::InBed | Rock::Seating) {
+                self.draw_rock(
+                    fb,
+                    l,
+                    i,
+                    (self.rx[i] - self.cam) as i32,
+                    self.ry[i] as i32 + sh,
+                    false,
+                );
             }
         }
-
-        // Near wall and posts, drawn over the load: the rocks now read as
-        // being down inside the bed rather than balanced on top of it.
         fb.shear_rect(bx, by + bh - near, bw, near, k, BODY);
         fb.shear_rect(bx, by + bh - near, bw, near / 6, k, BODY_LIGHT);
         fb.shear_rect(bx, by, wall, bh, k, BODY);
         fb.shear_rect(bx + bw - wall, by, wall, bh, k, BODY);
         fb.shear_rect(bx, by, wall, bh / 13, k, BODY_LIGHT);
         fb.shear_rect(bx + bw - wall, by, wall, bh / 13, k, BODY_LIGHT);
+    }
 
-        // ------------------------------------------------------------ rocks
-        // Everything not in the bed: on the ground, tumbling out, or in hand.
-        for i in 0..ROCKS {
-            match self.state[i] {
-                Rock::Ground | Rock::Falling => {
-                    draw_rock(fb, l.rock_r, self.rx[i], self.ry[i], self.facet[i], false)
-                }
-                _ => {}
-            }
-        }
-        if self.held >= 0 {
-            let i = self.held as usize;
-            draw_rock(fb, l.rock_r, self.rx[i], self.ry[i], self.facet[i], true);
+    fn draw_rock(&self, fb: &mut Frame, l: &L, i: usize, cx: i32, cy: i32, held: bool) {
+        let r = l.rock_r * self.size[i];
+        let ri = r as i32;
+        if ri < 2 || cx < -ri * 3 || cx > l.w as i32 + ri * 3 {
+            return;
         }
 
-        // --------------------------------------------------------------- UI
-        // the count, big enough to be the whole interface
-        let scale = (u * 0.040) as i32;
-        let pad = (u * 0.05) as i32;
-        fb.number(pad, pad, self.count, scale, NUMERAL);
+        let (body, light) = if self.special[i] {
+            (GEM, GEM_LIGHT)
+        } else {
+            (ROCK_C, ROCK_LIGHT)
+        };
 
-        // capacity pips, so "how many more fit" is visible without numbers
-        let pip = (u * 0.026) as i32;
-        for s in 0..ROCKS {
-            let filled = s < self.count as usize;
-            let c = if filled { PIP_FULL } else { PIP_EMPTY };
-            fb.disc(
-                pad + scale * 5 + s as i32 * pip * 3,
-                pad + scale * 2,
-                pip,
-                c,
-            );
+        if held {
+            fb.disc(cx, cy, ri + (r * 0.22) as i32, ROCK_HELD);
         }
+        fb.disc(cx, cy, ri, body);
+        fb.rect(
+            cx - ri + ri / 5,
+            cy + ri - ri / 3,
+            ri * 2 - ri * 2 / 5,
+            ri / 3,
+            ROCK_DARK,
+        );
+        // the highlight facet turns as the rock tumbles
+        let idx = ((self.facet[i] as i32 + (self.spin[i] as i32)) % 8 + 8) as usize % 8;
+        let (dx, dy) = SPIN[idx];
+        let u = (r * 0.34) as i32;
+        fb.rect(
+            cx + (dx * r * 0.34) as i32 - u / 2,
+            cy + (dy * r * 0.34) as i32 - u / 2,
+            u,
+            u * 3 / 4,
+            light,
+        );
     }
 }
 
@@ -684,24 +1135,3 @@ fn cloud(fb: &mut Frame, x: f32, y: f32, r: f32) {
     );
 }
 
-fn draw_rock(fb: &mut Frame, r: f32, x: f32, y: f32, facet: u8, held: bool) {
-    let cx = x as i32;
-    let cy = y as i32;
-    let ri = r as i32;
-
-    if held {
-        fb.disc(cx, cy, ri + (r * 0.22) as i32, ROCK_HELD);
-    }
-    fb.disc(cx, cy, ri, ROCK_C);
-    // a flat dark base so it reads as sitting rather than floating
-    fb.rect(cx - ri + ri / 5, cy + ri - ri / 3, ri * 2 - ri * 2 / 5, ri / 3, ROCK_DARK);
-    // one highlight facet, rotated per rock so the five are not identical
-    let u = ri / 2;
-    let (hx, hy) = match facet {
-        0 => (-u - u / 3, -u - u / 2),
-        1 => (u / 3, -u - u / 2),
-        2 => (-u - u / 2, u / 6),
-        _ => (u / 6, -u / 2),
-    };
-    fb.rect(cx + hx, cy + hy, u, u * 3 / 4, ROCK_LIGHT);
-}

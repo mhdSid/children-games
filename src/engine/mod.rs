@@ -1,9 +1,11 @@
 //! Shared machinery every game draws on: the framebuffer, the generator, and
 //! the pointer phases the host reports.
 
+pub mod audio;
 pub mod frame;
 pub mod rng;
 
+pub use audio::sfx;
 pub use frame::{clamp, fabs, height, lerp, set_size, width, Frame, Rgb};
 pub use rng::Rng;
 

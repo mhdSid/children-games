@@ -307,6 +307,7 @@ body {
     <h2>Choose a game</h2>
     <div id="picks"></div>
     <div class="minor">
+      <button type="button" id="mute">Sound on</button>
       <button type="button" id="full" hidden>Full screen</button>
       <button type="button" id="close">Back to the game</button>
     </div>
@@ -354,6 +355,127 @@ const GAMES = [
   },
 ];
 
+// ---------------------------------------------------------------------- sound
+// The module's one import. For a child who cannot read, this is half the
+// feedback channel — so it is synthesised here rather than shipped as files:
+// no assets, no loading, no licences.
+
+const Sound = (() => {
+  const OFF_KEY = "games.muted";
+  let ac = null, master = null, noiseBuf = null;
+  let eng = null, engGain = null, engFilt = null;
+  let revNext = 0, revOn = false;
+  let muted = false;
+  try { muted = localStorage.getItem(OFF_KEY) === "1"; } catch { muted = false; }
+
+  function ensure() {
+    if (ac) return ac;
+    const C = window.AudioContext || window.webkitAudioContext;
+    if (!C) return null;
+    ac = new C();
+
+    master = ac.createGain();
+    master.gain.value = muted ? 0 : 0.45;
+    master.connect(ac.destination);
+
+    noiseBuf = ac.createBuffer(1, Math.floor(ac.sampleRate * 0.5), ac.sampleRate);
+    const d = noiseBuf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+
+    // One oscillator held for the life of the page: the engine note. Its
+    // pitch and volume follow the truck's speed, which arrives every frame.
+    eng = ac.createOscillator();
+    eng.type = "sawtooth";
+    eng.frequency.value = 42;
+    engFilt = ac.createBiquadFilter();
+    engFilt.type = "lowpass";
+    engFilt.frequency.value = 260;
+    engFilt.Q.value = 6;
+    engGain = ac.createGain();
+    engGain.gain.value = 0;
+    eng.connect(engFilt); engFilt.connect(engGain); engGain.connect(master);
+    eng.start();
+    return ac;
+  }
+
+  function tone(type, f0, f1, dur, gain, dest) {
+    const o = ac.createOscillator(), g = ac.createGain();
+    o.type = type;
+    o.frequency.setValueAtTime(f0, ac.currentTime);
+    if (f1 !== f0) o.frequency.exponentialRampToValueAtTime(Math.max(1, f1), ac.currentTime + dur);
+    g.gain.setValueAtTime(0.0001, ac.currentTime);
+    g.gain.exponentialRampToValueAtTime(gain, ac.currentTime + 0.008);
+    g.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime + dur);
+    o.connect(g); g.connect(dest || master);
+    o.start(); o.stop(ac.currentTime + dur + 0.02);
+  }
+
+  function thud(dur, cut, gain) {
+    const src = ac.createBufferSource(); src.buffer = noiseBuf;
+    const f = ac.createBiquadFilter(); f.type = "lowpass"; f.frequency.value = cut;
+    const g = ac.createGain();
+    g.gain.setValueAtTime(gain, ac.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime + dur);
+    src.connect(f); f.connect(g); g.connect(master);
+    src.start(); src.stop(ac.currentTime + dur);
+  }
+
+  // Pentatonic, so the counting notes are always consonant however they land.
+  const NOTES = [392, 440, 523, 587, 659, 784, 880];
+
+  function play(id, p) {
+    if (!ac || ac.state === "suspended") return;
+    switch (id) {
+      case 0: tone("triangle", 300, 620, 0.10, 0.16); break;            // pickup
+      case 1: thud(0.16, 700, 0.30); tone("sine", 180, 110, 0.12, 0.16); break; // seat
+      case 2: tone("sawtooth", 90, 300, 0.55, 0.05); break;             // hydraulics
+      case 3: thud(0.20 + p * 0.16, 380 + p * 900, 0.20 + p * 0.45);    // rock lands
+              tone("sine", 150 - p * 40, 70, 0.16, 0.10 + p * 0.12); break;
+      case 4: tone("square", 392, 392, 0.26, 0.13);                     // horn
+              tone("square", 294, 294, 0.26, 0.10); break;
+      case 5: {                                                          // engine
+        if (!engGain) break;
+        const t = ac.currentTime;
+        engGain.gain.setTargetAtTime(0.030 + p * 0.075, t, 0.08);
+        eng.frequency.setTargetAtTime(40 + p * 74, t, 0.09);
+        engFilt.frequency.setTargetAtTime(220 + p * 900, t, 0.09);
+        break;
+      }
+      case 6: {                                                          // reversing
+        revOn = p > 0.5;
+        if (revOn && ac.currentTime > revNext) {
+          revNext = ac.currentTime + 0.62;
+          tone("square", 1050, 1050, 0.16, 0.07);
+        }
+        break;
+      }
+      case 7: {                                                          // the count changed
+        const n = Math.max(0, Math.min(NOTES.length - 1, Math.round(p)));
+        tone("triangle", NOTES[n], NOTES[n], 0.20, 0.13);
+        break;
+      }
+    }
+  }
+
+  return {
+    // Browsers will not start audio until the user has touched the page.
+    unlock() {
+      const c = ensure();
+      if (c && c.state === "suspended") c.resume();
+    },
+    play,
+    isMuted: () => muted,
+    toggle() {
+      muted = !muted;
+      try { localStorage.setItem(OFF_KEY, muted ? "1" : "0"); } catch {}
+      if (master) master.gain.value = muted ? 0 : 0.45;
+      return muted;
+    },
+    suspend() { if (ac && ac.state === "running") ac.suspend(); },
+    resume()  { if (ac && ac.state === "suspended") ac.resume(); },
+  };
+})();
+
 let wasm, frame, fw = 0, fh = 0;
 
 // ------------------------------------------------------------------- gestures
@@ -366,6 +488,10 @@ document.addEventListener("gesturestart",  stop, { passive: false });
 document.addEventListener("gesturechange", stop, { passive: false });
 document.addEventListener("contextmenu",   stop);
 document.addEventListener("dblclick",      stop, { passive: false });
+
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) Sound.suspend(); else Sound.resume();
+});
 
 const pin = () => window.scrollTo(0, 0);
 addEventListener("orientationchange", () => setTimeout(pin, 120));
@@ -413,12 +539,14 @@ addEventListener("resize", () => { pin(); fit(); });
 async function boot() {
   let instance;
   try {
-    ({ instance } = await WebAssembly.instantiateStreaming(fetch("games.wasm"), {}));
+  const imports = { env: { host_sfx: (id, p) => Sound.play(id, p) } };
+  try {
+    ({ instance } = await WebAssembly.instantiateStreaming(fetch("games.wasm"), imports));
   } catch {
     // instantiateStreaming needs application/wasm; fall back if the server
     // sends something else.
     const bytes = await fetch("games.wasm").then((r) => r.arrayBuffer());
-    ({ instance } = await WebAssembly.instantiate(bytes, {}));
+    ({ instance } = await WebAssembly.instantiate(bytes, imports));
   }
 
   wasm = instance.exports;
@@ -554,6 +682,12 @@ function closeSheet() {
   el("sheet").classList.remove("open");
 }
 
+function paintMute() {
+  el("mute").textContent = Sound.isMuted() ? "Sound off" : "Sound on";
+}
+el("mute").addEventListener("click", () => { Sound.unlock(); Sound.toggle(); paintMute(); });
+paintMute();
+
 el("close").addEventListener("click", closeSheet);
 el("sheet").addEventListener("click", (e) => {
   if (e.target === el("sheet")) closeSheet();
@@ -612,6 +746,7 @@ let sx = 0, sy = 0, dragging = false;
 canvas.addEventListener("pointerdown", (e) => {
   if (!wasm) return;
   e.preventDefault();
+  Sound.unlock();
   canvas.setPointerCapture(e.pointerId);
   dragging = true;
   sx = e.clientX; sy = e.clientY;
