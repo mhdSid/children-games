@@ -12,6 +12,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Games">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='10' fill='%2312181e'/%3E%3Crect x='8' y='26' width='30' height='18' fill='%23c99a2e'/%3E%3Crect x='38' y='20' width='18' height='24' fill='%23c8471f'/%3E%3Ccircle cx='18' cy='48' r='7' fill='%23262c30'/%3E%3Ccircle cx='46' cy='48' r='7' fill='%23262c30'/%3E%3C/svg%3E">
 <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%2312181e'/%3E%3Crect x='8' y='26' width='30' height='18' fill='%23c99a2e'/%3E%3Crect x='38' y='20' width='18' height='24' fill='%23c8471f'/%3E%3Ccircle cx='18' cy='48' r='7' fill='%23262c30'/%3E%3Ccircle cx='46' cy='48' r='7' fill='%23262c30'/%3E%3C/svg%3E">
 
 <style>
@@ -538,7 +539,6 @@ addEventListener("resize", () => { pin(); fit(); });
 
 async function boot() {
   let instance;
-  try {
   const imports = { env: { host_sfx: (id, p) => Sound.play(id, p) } };
   try {
     ({ instance } = await WebAssembly.instantiateStreaming(fetch("games.wasm"), imports));
