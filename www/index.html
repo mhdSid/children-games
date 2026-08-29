@@ -1,0 +1,654 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Games</title>
+
+<!-- Locked viewport: no pinch zoom, no double-tap zoom, draws under the notch. -->
+<meta name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, minimum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#12181e">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Games">
+<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%2312181e'/%3E%3Crect x='8' y='26' width='30' height='18' fill='%23c99a2e'/%3E%3Crect x='38' y='20' width='18' height='24' fill='%23c8471f'/%3E%3Ccircle cx='18' cy='48' r='7' fill='%23262c30'/%3E%3Ccircle cx='46' cy='48' r='7' fill='%23262c30'/%3E%3C/svg%3E">
+
+<style>
+/* ------------------------------------------------------------ viewport lock
+   Everything here exists to stop the page itself from moving while a small
+   finger drags across it: no scroll, no bounce, no pinch, no pull-to-refresh,
+   no text selection, no long-press callout. */
+
+:root {
+  --bg:        #12181e;
+  --line:      #202c35;
+  --ink:       #e6ede9;
+  --ink-soft:  #7d8f88;
+  --brass:     #c99a2e;
+  --brass-dim: rgba(201, 154, 46, .17);
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+  background: var(--bg);
+}
+
+body {
+  position: fixed;
+  inset: 0;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+  color: var(--ink);
+  font: 500 16px/1.4 ui-rounded, "SF Pro Rounded", system-ui, -apple-system,
+        "Segoe UI", Roboto, sans-serif;
+}
+
+/* ------------------------------------------------------------- the board
+   Edge to edge. The framebuffer is resized to the viewport's aspect, so
+   filling the box never stretches a pixel. */
+
+#board {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  background: var(--bg);
+  image-rendering: pixelated;
+  touch-action: none;
+}
+
+/* --------------------------------------------------------------- overlays
+   Nothing here is a permanent floating button. There is deliberately nothing
+   on screen for him to press by accident. */
+
+.readout {
+  position: fixed;
+  top: calc(env(safe-area-inset-top) + 10px);
+  right: calc(env(safe-area-inset-right) + 14px);
+  display: flex;
+  gap: 12px;
+  padding: 6px 12px;
+  border-radius: 9px;
+  background: rgba(13, 19, 24, .55);
+  backdrop-filter: blur(6px);
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity .2s;
+}
+.readout.on { opacity: 1; }
+.readout b { color: var(--brass); font-weight: 700; }
+.readout span { color: var(--ink-soft); }
+
+.hint {
+  position: fixed;
+  left: 50%;
+  /* clears the rock row along the bottom of the dump truck scene */
+  bottom: calc(env(safe-area-inset-bottom) + 112px);
+  transform: translateX(-50%);
+  max-width: 88%;
+  padding: 8px 16px;
+  border-radius: 9px;
+  background: rgba(13, 19, 24, .62);
+  backdrop-filter: blur(6px);
+  font-size: 14px;
+  pointer-events: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: bottom .15s;
+}
+.hint[hidden] { display: none; }
+.hint.above-pad { bottom: calc(env(safe-area-inset-bottom) + 148px); }
+
+.again {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  font: inherit;
+  font-size: 17px;
+  font-weight: 700;
+  color: #12181e;
+  background: var(--brass);
+  border: 0;
+  border-radius: 12px;
+  padding: 16px 30px;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.again[hidden] { display: none; }
+
+/* ----------------------------------------------------------------- gamepad */
+
+.pad {
+  display: none !important;
+  position: fixed;
+  left: 50%;
+  bottom: calc(env(safe-area-inset-bottom) + 16px);
+  transform: translateX(-50%);
+  display: grid;
+  grid-template-columns: repeat(3, 62px);
+  grid-template-areas: ".  up ." "lf dn rt";
+  gap: 6px;
+}
+.pad[hidden] { display: none; }
+
+.pad button {
+  font: inherit;
+  font-size: 21px;
+  color: var(--ink);
+  background: rgba(27, 36, 44, .5);
+  backdrop-filter: blur(6px);
+  border: 1px solid rgba(120, 140, 150, .22);
+  border-radius: 13px;
+  height: 52px;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.pad button:active { background: var(--brass-dim); border-color: var(--brass); }
+.pad .up { grid-area: up; }
+.pad .left { grid-area: lf; }
+.pad .down { grid-area: dn; }
+.pad .right { grid-area: rt; }
+
+@media (orientation: landscape) and (max-height: 520px) {
+  .pad { grid-template-columns: repeat(3, 52px); bottom: 10px; }
+  .pad button { height: 42px; }
+  .hint.above-pad { bottom: 124px; }
+}
+
+/* ------------------------------------------------------------- corner hold
+   The only way to change games. Invisible until it is being used, sized for
+   an adult thumb in the very corner, and it needs a steady hold — none of
+   which a two-year-old does by accident. */
+
+#hold {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 84px;
+  height: 84px;
+  touch-action: none;
+  z-index: 5;
+}
+
+#ring {
+  position: absolute;
+  top: calc(env(safe-area-inset-top) + 12px);
+  left: calc(env(safe-area-inset-left) + 12px);
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  opacity: 0;
+  transition: opacity .12s;
+  background:
+    conic-gradient(var(--brass) calc(var(--p, 0) * 1turn), rgba(255,255,255,.13) 0);
+  -webkit-mask: radial-gradient(circle, transparent 58%, #000 60%);
+          mask: radial-gradient(circle, transparent 58%, #000 60%);
+  pointer-events: none;
+}
+#ring.on { opacity: 1; }
+
+/* -------------------------------------------------------------- the switcher */
+
+.sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(9, 13, 17, .82);
+  backdrop-filter: blur(10px);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .16s;
+}
+.sheet.open { opacity: 1; pointer-events: auto; }
+
+.sheet-inner {
+  width: min(420px, 100%);
+  display: grid;
+  gap: 10px;
+}
+
+.sheet h2 {
+  margin: 0 0 4px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  text-align: center;
+}
+
+.sheet .pick {
+  font: inherit;
+  font-size: 19px;
+  font-weight: 700;
+  text-align: left;
+  color: var(--ink);
+  background: rgba(32, 44, 53, .55);
+  border: 1px solid var(--line);
+  border-radius: 15px;
+  padding: 20px 22px;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.sheet .pick[aria-pressed="true"] {
+  color: var(--brass);
+  background: var(--brass-dim);
+  border-color: rgba(201, 154, 46, .55);
+}
+
+.sheet .minor {
+  display: flex;
+  gap: 10px;
+  margin-top: 4px;
+}
+.sheet .minor button {
+  flex: 1;
+  font: inherit;
+  font-size: 14px;
+  color: var(--ink-soft);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 13px;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.sheet .minor button[hidden] { display: none; }
+
+:focus-visible { outline: 2px solid var(--brass); outline-offset: 2px; }
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; }
+}
+</style>
+</head>
+<body>
+
+<canvas id="board" width="480" height="480" aria-label="Game board"></canvas>
+
+<div class="readout" id="readout">
+  <span id="score-label">Score</span> <b id="score">0</b>
+  <span id="best-label">Best</span> <b id="best">0</b>
+</div>
+
+<div class="hint" id="hint">Loading…</div>
+<button class="again" id="again" type="button" hidden>Play again</button>
+
+<div class="pad" id="pad" aria-label="Direction controls" hidden>
+  <button class="up"    type="button" data-dir="0" aria-label="Up">&uarr;</button>
+  <button class="left"  type="button" data-dir="3" aria-label="Left">&larr;</button>
+  <button class="down"  type="button" data-dir="2" aria-label="Down">&darr;</button>
+  <button class="right" type="button" data-dir="1" aria-label="Right">&rarr;</button>
+</div>
+
+<div id="hold" aria-hidden="true"></div>
+<div id="ring"></div>
+
+<div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-label="Choose a game">
+  <div class="sheet-inner">
+    <h2>Choose a game</h2>
+    <div id="picks"></div>
+    <div class="minor">
+      <button type="button" id="full" hidden>Full screen</button>
+      <button type="button" id="close">Back to the game</button>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+const el     = (id) => document.getElementById(id);
+const canvas = el("board");
+const ctx    = canvas.getContext("2d", { alpha: false });
+
+const DIRS = { ArrowUp: 0, ArrowRight: 1, ArrowDown: 2, ArrowLeft: 3,
+               w: 0, d: 1, s: 2, a: 3, W: 0, D: 1, S: 2, A: 3 };
+
+// Pointer phases, matching engine::{DOWN, MOVE, UP}.
+const DOWN = 0, MOVE = 1, UP = 2;
+
+// Must match engine::frame::{MAX_W, MAX_H}.
+const MAX_W = 1200, MAX_H = 1200;
+// Short side of the framebuffer. The long side follows the viewport's aspect.
+const BASE = 480;
+
+// One entry per game in the module. `keys` decides whether the D-pad and the
+// swipe reader are live. Pointer events are always forwarded — games that
+// ignore them inherit an empty `pointer` from the Game trait.
+const GAMES = [
+  {
+    title: "Snake",
+    keys: true,
+    readout: true,
+    score: "Score", best: "Best",
+    hint: (st, sc) =>
+      st === 0 ? "" // Swipe or tap a direction to start
+    : st === 1 ? ""
+    :            "Game over — " + sc + (sc === 1 ? " apple" : " apples"),
+  },
+  {
+    title: "Dump Truck",
+    keys: false,
+    readout: false,
+    score: "Loaded", best: "Most",
+    hint: (st, sc) =>
+      sc === 0 ? "" // Drag the rocks into the truck
+               : "" // Tap the truck to tip them out
+  },
+];
+
+let wasm, frame, fw = 0, fh = 0;
+
+// ------------------------------------------------------------------- gestures
+// Belt and braces alongside the CSS: kill anything that could still scroll,
+// zoom, or pop a magnifier while he plays.
+
+const stop = (e) => e.preventDefault();
+document.addEventListener("touchmove",     stop, { passive: false });
+document.addEventListener("gesturestart",  stop, { passive: false });
+document.addEventListener("gesturechange", stop, { passive: false });
+document.addEventListener("contextmenu",   stop);
+document.addEventListener("dblclick",      stop, { passive: false });
+
+const pin = () => window.scrollTo(0, 0);
+addEventListener("orientationchange", () => setTimeout(pin, 120));
+
+// ------------------------------------------------------------------ resizing
+
+/// The framebuffer matches the viewport's aspect, so the canvas can fill the
+/// screen without distortion. Short side is fixed; long side follows.
+function renderSize() {
+  const vw = Math.max(1, innerWidth);
+  const vh = Math.max(1, innerHeight);
+  const ar = vw / vh;
+
+  let w, h;
+  if (ar <= 1) { w = BASE; h = Math.round(BASE / ar); }
+  else         { h = BASE; w = Math.round(BASE * ar); }
+
+  // Clamp to the buffer the module owns, keeping the aspect honest.
+  if (h > MAX_H) { h = MAX_H; w = Math.round(MAX_H * ar); }
+  if (w > MAX_W) { w = MAX_W; h = Math.round(MAX_W / ar); }
+
+  return [Math.max(16, Math.min(MAX_W, w)), Math.max(16, Math.min(MAX_H, h))];
+}
+
+function fit() {
+  if (!wasm) return;
+  const [w, h] = renderSize();
+  if (w === fw && h === fh) return;
+
+  fw = w; fh = h;
+  wasm.resize(w, h);            // re-deals the game: the board shape changed
+  canvas.width = w;
+  canvas.height = h;
+
+  // ImageData backed directly by wasm linear memory — no copy on our side.
+  // The module has no allocator, so memory never grows and this never detaches.
+  const view = new Uint8ClampedArray(wasm.memory.buffer, wasm.frame_ptr(), w * h * 4);
+  frame = new ImageData(view, w, h);
+}
+
+addEventListener("resize", () => { pin(); fit(); });
+
+// ----------------------------------------------------------------------- boot
+
+async function boot() {
+  let instance;
+  try {
+    ({ instance } = await WebAssembly.instantiateStreaming(fetch("games.wasm"), {}));
+  } catch {
+    // instantiateStreaming needs application/wasm; fall back if the server
+    // sends something else.
+    const bytes = await fetch("games.wasm").then((r) => r.arrayBuffer());
+    ({ instance } = await WebAssembly.instantiate(bytes, {}));
+  }
+
+  wasm = instance.exports;
+  wasm.init((Date.now() ^ (performance.now() * 1000)) >>> 0);
+
+  buildPicks();
+  fit();
+  applyGame(wasm.current());
+  requestAnimationFrame(loop);
+}
+
+// ---------------------------------------------------------------------- games
+
+function buildPicks() {
+  const host = el("picks");
+  host.replaceChildren();
+  const wrap = document.createElement("div");
+  wrap.style.display = "grid";
+  wrap.style.gap = "10px";
+  for (let i = 0; i < wasm.game_count(); i++) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "pick";
+    b.textContent = GAMES[i] ? GAMES[i].title : "Game " + i;
+    b.setAttribute("aria-pressed", "false");
+    b.addEventListener("click", () => { switchTo(i); closeSheet(); });
+    wrap.append(b);
+  }
+  host.append(wrap);
+}
+
+function applyGame(id) {
+  const g = GAMES[id] || GAMES[0];
+  el("score-label").textContent = g.score;
+  el("best-label").textContent  = g.best;
+  el("pad").hidden = !g.keys;
+  el("hint").classList.toggle("above-pad", g.keys);
+  el("readout").classList.toggle("on", g.readout);
+  [...el("picks").querySelectorAll(".pick")].forEach((b, i) =>
+    b.setAttribute("aria-pressed", String(i === id)));
+}
+
+function switchTo(id) {
+  if (!wasm || id === wasm.current()) return;
+  wasm.select(id);
+  applyGame(id);
+}
+
+// ----------------------------------------------------------------------- loop
+
+let prev = performance.now();
+
+function loop(now) {
+  const dt = now - prev;
+  prev = now;
+
+  wasm.tick(dt);
+  ctx.putImageData(frame, 0, 0);
+
+  const g     = GAMES[wasm.current()] || GAMES[0];
+  const state = wasm.status();
+  const sc    = wasm.score();
+
+  el("score").textContent = sc;
+  el("best").textContent  = wasm.best();
+  el("again").hidden      = state !== 2;
+
+  const text = g.hint(state, sc);
+  el("hint").textContent = text;
+  el("hint").hidden = text === "";
+
+  requestAnimationFrame(loop);
+}
+
+// ------------------------------------------------------------- corner hold
+// Hold the top-left corner for 1.6 s to open the switcher. Nothing is drawn
+// until the hold is underway, so there is no button inviting a small hand,
+// and a stray palm or a quick tap never gets there.
+
+const HOLD_MS = 1600;
+let holdStart = 0, holdId = null, holdRAF = 0, hx = 0, hy = 0;
+
+function holdTick(now) {
+  const p = Math.min(1, (now - holdStart) / HOLD_MS);
+  el("ring").style.setProperty("--p", p.toFixed(3));
+  if (p >= 1) { endHold(); openSheet(); return; }
+  holdRAF = requestAnimationFrame(holdTick);
+}
+
+function endHold() {
+  cancelAnimationFrame(holdRAF);
+  holdId = null;
+  el("ring").classList.remove("on");
+  el("ring").style.setProperty("--p", 0);
+}
+
+el("hold").addEventListener("pointerdown", (e) => {
+  e.preventDefault();
+  el("hold").setPointerCapture(e.pointerId);
+  holdId = e.pointerId;
+  hx = e.clientX; hy = e.clientY;
+  holdStart = performance.now();
+  el("ring").classList.add("on");
+  holdRAF = requestAnimationFrame(holdTick);
+});
+
+el("hold").addEventListener("pointermove", (e) => {
+  // Sliding off cancels: this has to be a deliberate, steady hold.
+  if (holdId === e.pointerId && Math.hypot(e.clientX - hx, e.clientY - hy) > 28) {
+    endHold();
+  }
+});
+
+for (const ev of ["pointerup", "pointercancel", "pointerleave"]) {
+  el("hold").addEventListener(ev, (e) => {
+    if (holdId === e.pointerId) endHold();
+  });
+}
+
+// ------------------------------------------------------------- the switcher
+
+let sheetTimer = 0;
+
+function openSheet() {
+  el("sheet").classList.add("open");
+  clearTimeout(sheetTimer);
+  // Closes itself, so an opened sheet left alone returns to the game.
+  sheetTimer = setTimeout(closeSheet, 10000);
+}
+
+function closeSheet() {
+  clearTimeout(sheetTimer);
+  el("sheet").classList.remove("open");
+}
+
+el("close").addEventListener("click", closeSheet);
+el("sheet").addEventListener("click", (e) => {
+  if (e.target === el("sheet")) closeSheet();
+});
+
+if (document.fullscreenEnabled || document.webkitFullscreenEnabled) {
+  el("full").hidden = false;
+  el("full").addEventListener("click", () => {
+    const d = document.documentElement;
+    if (document.fullscreenElement || document.webkitFullscreenElement) {
+      (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+    } else {
+      (d.requestFullscreen || d.webkitRequestFullscreen).call(d, { navigationUI: "hide" });
+    }
+  });
+}
+
+// ---------------------------------------------------------------------- input
+
+function turn(dir) { if (wasm) wasm.turn(dir); }
+function again()   { if (wasm) wasm.restart(); }
+
+addEventListener("keydown", (e) => {
+  if (e.key === "Escape") { closeSheet(); return; }
+  if (e.key in DIRS) {
+    e.preventDefault();
+    turn(DIRS[e.key]);
+  } else if (e.key === " " || e.key === "Enter") {
+    if (wasm && wasm.status() === 2) { e.preventDefault(); again(); }
+  } else if (e.key === "Tab") {
+    e.preventDefault();
+    openSheet();               // keyboard escape hatch for desktop
+  }
+});
+
+el("again").addEventListener("click", again);
+
+for (const b of document.querySelectorAll(".pad button")) {
+  // pointerdown, not click: a toddler lifts a finger somewhere else entirely.
+  b.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    turn(Number(b.dataset.dir));
+  });
+}
+
+// Client coordinates into framebuffer space. The canvas fills the viewport at
+// a matching aspect, so this is a straight scale.
+function fbPoint(e) {
+  const r = canvas.getBoundingClientRect();
+  return [(e.clientX - r.left) * fw / r.width,
+          (e.clientY - r.top)  * fh / r.height];
+}
+
+let sx = 0, sy = 0, dragging = false;
+
+canvas.addEventListener("pointerdown", (e) => {
+  if (!wasm) return;
+  e.preventDefault();
+  canvas.setPointerCapture(e.pointerId);
+  dragging = true;
+  sx = e.clientX; sy = e.clientY;
+  wasm.pointer(...fbPoint(e), DOWN);
+});
+
+canvas.addEventListener("pointermove", (e) => {
+  if (!wasm || !dragging) return;
+  e.preventDefault();
+  wasm.pointer(...fbPoint(e), MOVE);
+});
+
+function endPointer(e) {
+  if (!wasm || !dragging) return;
+  dragging = false;
+  wasm.pointer(...fbPoint(e), UP);
+
+  // Swipe-to-turn, for the games that steer.
+  const g = GAMES[wasm.current()] || GAMES[0];
+  if (!g.keys) return;
+  const dx = e.clientX - sx, dy = e.clientY - sy;
+  if (Math.hypot(dx, dy) < 24) {
+    if (wasm.status() === 2) again();
+    return;
+  }
+  if (Math.abs(dx) > Math.abs(dy)) turn(dx > 0 ? 1 : 3);
+  else turn(dy > 0 ? 2 : 0);
+}
+
+canvas.addEventListener("pointerup", endPointer);
+canvas.addEventListener("pointercancel", endPointer);
+
+boot().catch((err) => {
+  el("hint").hidden = false;
+  el("hint").textContent = "Module failed to load — serve this folder over HTTP.";
+  console.error(err);
+});
+</script>
+</body>
+</html>
