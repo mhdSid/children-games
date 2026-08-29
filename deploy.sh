@@ -9,6 +9,31 @@ cd "$(dirname "$0")"
 
 [ -f www/games.wasm ] || { echo "www/games.wasm missing — run ./build.sh first"; exit 1; }
 
+# Parse the page's module script before publishing. A syntax error in there is
+# invisible until someone opens the page in a browser, and by then it is live.
+if command -v node >/dev/null 2>&1; then
+  node -e '
+    const fs = require("fs"), os = require("os"), path = require("path");
+    const cp = require("child_process");
+    const html = fs.readFileSync("www/index.html", "utf8");
+    const m = html.match(/<script type="module">\n([\s\S]*)\n<\/script>/);
+    if (!m) { console.error("no module script found in www/index.html"); process.exit(1); }
+    const f = path.join(os.tmpdir(), "games-check-" + process.pid + ".mjs");
+    fs.writeFileSync(f, m[1]);
+    try {
+      cp.execFileSync(process.execPath, ["--check", f], { stdio: "inherit" });
+      console.log("index.html script parses");
+    } catch {
+      console.error("index.html script does not parse — not deploying");
+      process.exit(1);
+    } finally {
+      fs.unlinkSync(f);
+    }
+  '
+else
+  echo "note: node not found, skipping the syntax check"
+fi
+
 nojekyll=$(printf '' | git hash-object -w --stdin)   # stop Pages running Jekyll
 wasm=$(git hash-object -w www/games.wasm)
 index=$(git hash-object -w www/index.html)
