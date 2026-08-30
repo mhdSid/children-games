@@ -24,7 +24,7 @@ const TIP_MAX: f32 = 0.62;
 const TRUCK_ABOVE_GROUND: f32 = 0.41;
 /// Sky left above the cab. When terrain lands, the hills' amplitude has to come
 /// out of this too, or the truck clips the top of the screen driving uphill.
-const SKY_HEADROOM: f32 = 0.14;
+const SKY_HEADROOM: f32 = 0.22;
 
 /// Unit vectors on an eighth turn, so wheels and tumbling rocks can rotate
 /// without `sin` or `cos` — neither of which exists in `core`.
@@ -133,7 +133,7 @@ fn layout() -> L {
         // A tall frame leaves the scene marooned in a band at the bottom, so
         // the truck is allowed to take more of the width there. Landscape does
         // not need it — the height budget below is the binding constraint.
-        let by_w = w * if h > w * 1.4 { 0.72 } else { 0.55 };
+        let by_w = w * if h > w * 1.4 { 0.56 } else { 0.44 };
         let by_h = (ground - u * SKY_HEADROOM) / TRUCK_ABOVE_GROUND;
         if by_w < by_h {
             by_w
