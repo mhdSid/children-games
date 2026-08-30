@@ -33,6 +33,19 @@ pub trait Game {
     /// 0 up, 1 right, 2 down, 3 left. Only the keyboard games care.
     fn key(&mut self, _dir: u32) {}
 
+    /// Turn around. Only games with something that faces a direction care.
+    fn flip(&mut self) {}
+
+    /// Whether the page should offer a turn-around button for this game.
+    fn can_flip(&self) -> bool {
+        false
+    }
+
+    /// +1 facing right, -1 facing left, 0 for games with no facing.
+    fn facing(&self) -> i32 {
+        0
+    }
+
     fn score(&self) -> u32 {
         0
     }

@@ -49,7 +49,13 @@ There is a quarry full of rocks and a big yellow truck.
 | **Drags the truck** | it drives! The wheels turn, the engine revs, the whole world scrolls past |
 | **Taps the back** | the truck tips — rocks tumble out one at a time and the number counts **DOWN** … 4 · 3 · 2 · 1 · 0 |
 | **Taps the cab** | 📣 **HONK!** and the headlight flashes |
+| **Taps the round arrow** | the truck turns around, so the load tips out the other side |
 | **Taps anything else** | a little puff of dust, because nothing should ever do nothing |
+
+A dump truck tips **backwards** — the load always comes out behind the cab. So
+if what he wants is on the other side, he turns the truck round first. The round
+arrow button in the bottom corner does it, and the truck swings through edge-on
+to face the other way.
 
 Rocks come in three sizes and four kinds now — granite, sandstone, basalt, and
 one that is **not a rock at all**. Big ones land harder, bounce less, and roll

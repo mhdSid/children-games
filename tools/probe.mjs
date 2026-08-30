@@ -304,5 +304,35 @@ console.log("\n=== dragging the truck slowly ===");
   ok(reversals <= 2, `motion does not stutter backwards (${reversals} reversals in 35 frames)`);
 }
 
+// ---------------------------------------------------------------------------
+// Turning round.
+//
+// Only the state machine is asserted here. Which side the load actually lands
+// on is checked by eye from a rendered frame (tools/shot.mjs) — measuring it
+// from pixels needs the camera to be perfectly still between two samples, and
+// it is not: it keeps easing toward the truck long after the drag ends, so the
+// quarry scrolls between the two counts and swamps the handful of rocks that
+// were tipped.
+console.log("\n=== turning the truck around ===");
+{
+  w.init(4242); w.select(1); w.resize(844, 390); tick(4);
+  ok(w.can_flip() === 1, "the truck game offers a turn-around button");
+  ok(w.facing() === 1, "starts facing right");
+
+  w.flip();
+  tick(4);
+  ok(w.facing() === 1, "does not swap the instant it is pressed (it turns)");
+  tick(40);
+  ok(w.facing() === -1, "has turned round by the end of the animation");
+
+  w.flip(); tick(60);
+  ok(w.facing() === 1, "and back again");
+
+  // a turn must not be startable mid-tip, or the load swaps ends mid-pour
+  w.select(0);
+  ok(w.can_flip() === 0, "snake offers no turn button");
+  ok(w.facing() === 0, "and reports no facing");
+}
+
 console.log(fails === 0 ? "\nALL PASS" : `\n${fails} FAILURES`);
 process.exit(fails ? 1 : 0);

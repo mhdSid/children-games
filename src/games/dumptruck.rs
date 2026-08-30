@@ -219,6 +219,13 @@ pub struct DumpTruck {
     shape: [u32; ROCKS], // seed for the blob outline
 
     // truck
+    /// +1 faces right, -1 faces left. The load always leaves out of the back,
+    /// so this decides which side a tip lands on.
+    facing: f32,
+    /// 0..1 through a turn; 1 means settled. The truck squashes to nothing at
+    /// the halfway point and comes back the other way round, which reads as
+    /// turning without needing any rotation maths.
+    turn: f32,
     tx: f32,
     tv: f32,
     tv_smooth: f32,   // what the camera and the engine note read
@@ -282,6 +289,8 @@ impl DumpTruck {
             spin: [0.0; ROCKS],
             kind: [Kind::Granite; ROCKS],
             shape: [0; ROCKS],
+            facing: 1.0,
+            turn: 1.0,
             tx: 0.0,
             tv: 0.0,
             tv_smooth: 0.0,
@@ -322,11 +331,25 @@ impl DumpTruck {
 
     // ------------------------------------------------------------- geometry
 
-    fn bed_x(&self, _l: &L) -> f32 {
-        self.tx
+    fn faces_left(&self) -> bool {
+        self.facing < 0.0
+    }
+    /// Facing left, the cab takes the near end and the bed the far one. Every
+    /// other measurement is derived from these two, so swapping them here is
+    /// what actually turns the truck around.
+    fn bed_x(&self, l: &L) -> f32 {
+        if self.faces_left() {
+            self.tx + l.cab_w + l.truck_w * 0.030
+        } else {
+            self.tx
+        }
     }
     fn cab_x(&self, l: &L) -> f32 {
-        self.tx + l.bed_w + l.truck_w * 0.030
+        if self.faces_left() {
+            self.tx
+        } else {
+            self.tx + l.bed_w + l.truck_w * 0.030
+        }
     }
     fn chassis_y(&self, l: &L) -> f32 {
         l.ground + l.wheel_r * 0.24 - l.wheel_r * 0.82 + self.susp
@@ -337,8 +360,12 @@ impl DumpTruck {
     fn cab_y(&self, l: &L) -> f32 {
         self.chassis_y(l) - l.cab_h
     }
+    /// The truck occupies [tx, tx + truck_w] whichever way round it is. This
+    /// used to be derived from the cab, which put it at the LEFT end once the
+    /// truck turned — collapsing every hit box to an empty range, so a turned
+    /// truck could not be tapped, driven or tipped at all.
     fn truck_right(&self, l: &L) -> f32 {
-        self.cab_x(l) + l.cab_w
+        self.tx + l.truck_w
     }
 
     fn slot_pos(&self, l: &L, s: usize) -> (f32, f32) {
@@ -348,7 +375,13 @@ impl DumpTruck {
             + l.rock_r
             + across * (s as f32 / (BED_SLOTS - 1) as f32);
         let y = self.bed_y(l) + l.bed_h * 0.42;
-        (x, y - self.tip * (x - self.bed_x(l)))
+        // the bed lifts at the cab end, so the load slides toward the back
+        let arm = if self.faces_left() {
+            self.bed_x(l) + l.bed_w - x
+        } else {
+            x - self.bed_x(l)
+        };
+        (x, y - self.tip * arm)
     }
 
     fn free_slot(&self) -> Option<usize> {
@@ -419,7 +452,13 @@ impl DumpTruck {
     }
 
     fn on_cab(&self, l: &L, x: f32, y: f32) -> bool {
-        x > self.cab_x(l) && x < self.truck_right(l) && y > self.cab_y(l) && y < self.chassis_y(l)
+        // the cab's own span, not "everything right of the cab" — that would
+        // swallow the bed once the truck is turned round, and a tap meant to
+        // tip the load would sound the horn instead
+        x > self.cab_x(l)
+            && x < self.cab_x(l) + l.cab_w
+            && y > self.cab_y(l)
+            && y < self.chassis_y(l)
     }
 
     // ---------------------------------------------------------------- setup
@@ -516,6 +555,15 @@ impl DumpTruck {
     }
 
 
+    fn start_turn(&mut self) {
+        // Not while the bed is up: the load would swap ends mid-pour.
+        if self.turn >= 1.0 && self.phase == Tip::Idle {
+            self.turn = 0.0;
+            self.susp_v += 90.0;
+            sfx(audio::TURN, 1.0);
+        }
+    }
+
     fn start_tip(&mut self) {
         if self.phase == Tip::Idle && self.in_bed_count() > 0 {
             self.phase = Tip::Squat;
@@ -542,6 +590,20 @@ impl DumpTruck {
         self.susp_v *= 1.0 - 6.0 * s;
         self.susp += self.susp_v * s;
         self.susp = clamp(self.susp, -l.wheel_r * 0.5, l.wheel_r * 0.5);
+
+        if self.turn < 1.0 {
+            let was = self.turn;
+            self.turn += s * 2.6;
+            // halfway through it is edge-on and invisible; that is where it
+            // actually swaps round
+            if was < 0.5 && self.turn >= 0.5 {
+                self.facing = -self.facing;
+            }
+            if self.turn > 1.0 {
+                self.turn = 1.0;
+            }
+            self.moved = true;
+        }
 
         self.lamp = if self.lamp > 0.0 { self.lamp - s * 1.6 } else { 0.0 };
         self.pulse = if self.pulse > 0.0 { self.pulse - s * 2.2 } else { 0.0 };
@@ -673,13 +735,16 @@ impl DumpTruck {
             self.spill_t += s;
             if self.spill_t > 0.16 {
                 self.spill_t = 0.0;
+                // spill the rock nearest the open end first, whichever end
+                // that is now
                 let mut pick = -1i32;
                 let mut best = l.world_w * 2.0;
                 for i in 0..ROCKS {
                     if self.state[i] == Rock::InBed {
                         let (sx, _) = self.slot_pos(l, self.slot[i]);
-                        if sx < best {
-                            best = sx;
+                        let d = if self.faces_left() { -sx } else { sx };
+                        if d < best {
+                            best = d;
                             pick = i as i32;
                         }
                     }
@@ -687,7 +752,8 @@ impl DumpTruck {
                 if pick >= 0 {
                     let i = pick as usize;
                     self.state[i] = Rock::Falling;
-                    self.vx[i] = -(l.u * 0.18) - rng.unit() * l.u * 0.14;
+                    // out of the back: left when facing right, right when left
+                    self.vx[i] = -self.facing * (l.u * 0.18 + rng.unit() * l.u * 0.14);
                     self.vy[i] = -(l.u * 0.06) - rng.unit() * l.u * 0.06;
                     self.set_count(self.count.saturating_sub(1));
                     self.moved = true;
@@ -1001,6 +1067,22 @@ impl Game for DumpTruck {
         }
     }
 
+    fn flip(&mut self) {
+        self.start_turn();
+    }
+
+    fn can_flip(&self) -> bool {
+        true
+    }
+
+    fn facing(&self) -> i32 {
+        if self.faces_left() {
+            -1
+        } else {
+            1
+        }
+    }
+
     fn score(&self) -> u32 {
         self.count
     }
@@ -1185,94 +1267,137 @@ impl Game for DumpTruck {
 
 impl DumpTruck {
     fn draw_truck(&self, fb: &mut Frame, l: &L, sh: i32) {
-        let bx = (self.bed_x(l) - self.cam) as i32;
-        let cx = (self.cab_x(l) - self.cam) as i32;
+        // Mid-turn the truck is squashed toward its own centre line; at the
+        // halfway point it is edge-on and the facing has already swapped, so
+        // it comes back out the other way round. No rotation maths, and it
+        // reads exactly like a truck turning.
+        let squash = {
+            let t = 1.0 - 2.0 * self.turn;
+            let a = if t < 0.0 { -t } else { t };
+            if self.turn >= 1.0 {
+                1.0
+            } else if a < 0.04 {
+                0.04
+            } else {
+                a
+            }
+        };
+        let mid = self.tx + l.truck_w * 0.5;
+        // world x -> screen x, squashed about the truck's centre line
+        let sx = |x: f32| -> f32 { (mid + (x - mid) * squash) - self.cam };
+        // a span, as an integer left edge and width of at least one pixel
+        let seg = |a: f32, b: f32| -> (i32, i32) {
+            let (p, q) = (sx(a), sx(b));
+            let (lo, hi) = if p < q { (p, q) } else { (q, p) };
+            let wpx = (hi - lo) as i32;
+            (lo as i32, if wpx < 1 { 1 } else { wpx })
+        };
+
+        let flip = self.faces_left();
+        let bed0 = self.bed_x(l);
+        let cab0 = self.cab_x(l);
         let by = self.bed_y(l) as i32 + sh;
         let cy = self.cab_y(l) as i32 + sh;
         let ch_y = self.chassis_y(l) as i32 + sh;
-        let (bw, bh) = (l.bed_w as i32, l.bed_h as i32);
-        let (cw, ch) = (l.cab_w as i32, l.cab_h as i32);
-        let wall = l.wall as i32;
+        let bh = l.bed_h as i32;
+        let ch = l.cab_h as i32;
         let near = (l.bed_h * 0.326) as i32;
-        let wr = l.wheel_r as i32;
 
         // chassis rail
-        fb.rect(
-            bx + 6,
-            ch_y,
-            (self.truck_right(l) - self.bed_x(l)) as i32 - 12,
-            (l.wheel_r * 0.58) as i32,
-            BODY_DARK,
-        );
+        let (rx, rw) = seg(self.tx + 6.0, self.tx + l.truck_w - 6.0);
+        fb.rect(rx, ch_y, rw, (l.wheel_r * 0.58) as i32, BODY_DARK);
 
         // wheels, with lugs that turn as it drives
         let wy = (l.ground + l.wheel_r * 0.24) as i32 + sh;
+        // Offsets along a part, measured from its front. Mirrored when the
+        // truck faces the other way, so the rear axles stay at the rear.
+        let along = |base: f32, span: f32, frac: f32| -> f32 {
+            base + span * if flip { 1.0 - frac } else { frac }
+        };
         let wheels = [
-            self.bed_x(l) + l.bed_w * 0.20,
-            self.bed_x(l) + l.bed_w * 0.62,
-            self.cab_x(l) + l.cab_w * 0.50,
+            along(bed0, l.bed_w, 0.20),
+            along(bed0, l.bed_w, 0.62),
+            along(cab0, l.cab_w, 0.50),
         ];
+        // seen edge-on a wheel is a slot, not a circle
+        let wr = (l.wheel_r * (0.30 + 0.70 * squash)) as i32;
         for &wx in &wheels {
-            let px = (wx - self.cam) as i32;
+            let px = sx(wx) as i32;
             fb.disc(px, wy, wr, TIRE);
-            fb.disc(px, wy, (l.wheel_r * 0.46) as i32, HUB);
-            // three lugs on an eighth-turn table: rotation without trig
+            fb.disc(px, wy, (wr as f32 * 0.46) as i32, HUB);
             let base = (self.wheel_a * 1.27) as i32;
             for k in 0..3 {
                 let (dx, dy) = SPIN[(((base + k * 3) % 8) + 8) as usize % 8];
                 fb.rect(
-                    px + (dx * l.wheel_r * 0.26) as i32 - 2,
+                    px + (dx * wr as f32 * 0.55) as i32 - 2,
                     wy + (dy * l.wheel_r * 0.26) as i32 - 2,
-                    4,
-                    4,
+                    3,
+                    3,
                     LUG,
                 );
             }
         }
 
         // cab
+        let (cx, cw) = seg(cab0, cab0 + l.cab_w);
         fb.rect(cx, cy, cw, ch, CAB_C);
         fb.rect(cx, cy + ch - ch / 8, cw, ch / 8, CAB_DARK);
         fb.rect(cx + cw / 7, cy + ch / 6, cw - cw / 3, ch / 3, GLASS);
         fb.rect(cx + cw / 7, cy + ch / 6 + ch / 4, cw - cw / 3, ch / 10, GLASS_DARK);
+        // headlight on the leading face, whichever that is
+        let lamp_w = (cw / 9).max(1);
+        let lamp_x = if flip { cx - lamp_w / 2 } else { cx + cw - lamp_w / 2 };
         fb.rect(
-            cx + cw - cw / 14,
+            lamp_x,
             cy + ch * 5 / 8,
-            cw / 9,
+            lamp_w,
             ch / 7,
             if self.lamp > 0.0 { LAMP } else { LAMP_OFF },
         );
-        // exhaust stack
-        fb.rect(cx + cw / 6, cy - (l.u * 0.020) as i32, cw / 12, (l.u * 0.022) as i32, BODY_DARK);
+        // exhaust stack, on the cab's inboard side
+        let stack = if flip {
+            cab0 + l.cab_w * 0.80
+        } else {
+            cab0 + l.cab_w * 0.20
+        };
+        let (ex, ew) = seg(stack, stack + l.cab_w * 0.09);
+        fb.rect(ex, cy - (l.u * 0.020) as i32, ew, (l.u * 0.022) as i32, BODY_DARK);
 
-        // bed: back panel, load, then the near wall closes over it so the
-        // rocks read as being down inside rather than balanced on top
+        // bed: back panel, then the load, then the near wall over the top of
+        // it so the rocks read as being down inside
         let k = self.tip;
-        fb.shear_rect(bx, by, bw, bh, k, BODY_DARK);
+        let (bx, bw) = seg(bed0, bed0 + l.bed_w);
+        let wall = (seg(bed0, bed0 + l.wall).1).max(1);
+
+        fb.shear_rect_dir(bx, by, bw, bh, k, flip, BODY_DARK);
         for i in 0..ROCKS {
             if matches!(self.state[i], Rock::InBed | Rock::Seating) {
-                self.draw_rock(
+                let r = l.rock_r * self.size[i] * squash;
+                self.draw_rock_at(
                     fb,
-                    l,
                     i,
-                    (self.rx[i] - self.cam) as i32,
+                    sx(self.rx[i]) as i32,
                     self.ry[i] as i32 + sh,
+                    if r < 2.0 { 2.0 } else { r },
                     false,
                 );
             }
         }
-        fb.shear_rect(bx, by + bh - near, bw, near, k, BODY);
-        fb.shear_rect(bx, by + bh - near, bw, near / 6, k, BODY_LIGHT);
-        fb.shear_rect(bx, by, wall, bh, k, BODY);
-        fb.shear_rect(bx + bw - wall, by, wall, bh, k, BODY);
-        fb.shear_rect(bx, by, wall, bh / 13, k, BODY_LIGHT);
-        fb.shear_rect(bx + bw - wall, by, wall, bh / 13, k, BODY_LIGHT);
+        fb.shear_rect_dir(bx, by + bh - near, bw, near, k, flip, BODY);
+        fb.shear_rect_dir(bx, by + bh - near, bw, near / 6, k, flip, BODY_LIGHT);
+        fb.shear_rect_dir(bx, by, wall, bh, k, flip, BODY);
+        fb.shear_rect_dir(bx + bw - wall, by, wall, bh, k, flip, BODY);
+        fb.shear_rect_dir(bx, by, wall, bh / 13, k, flip, BODY_LIGHT);
+        fb.shear_rect_dir(bx + bw - wall, by, wall, bh / 13, k, flip, BODY_LIGHT);
     }
 
     fn draw_rock(&self, fb: &mut Frame, l: &L, i: usize, cx: i32, cy: i32, held: bool) {
-        let r = l.rock_r * self.size[i];
+        self.draw_rock_at(fb, i, cx, cy, l.rock_r * self.size[i], held);
+    }
+
+    fn draw_rock_at(&self, fb: &mut Frame, i: usize, cx: i32, cy: i32, r: f32, held: bool) {
         let ri = r as i32;
-        if ri < 2 || cx < -ri * 3 || cx > l.w as i32 + ri * 3 {
+        if ri < 2 || cx < -ri * 3 || cx > width() as i32 + ri * 3 {
             return;
         }
 

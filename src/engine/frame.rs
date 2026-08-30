@@ -107,9 +107,21 @@ impl Frame {
     /// A rect sheared vertically: column `i` sits `k * i` pixels higher than
     /// column 0. Cheaper than a rotation and, for a tipping truck bed, reads
     /// the same — no trigonometry anywhere in the module.
-    pub fn shear_rect(&mut self, x: i32, y: i32, w: i32, h: i32, k: f32, c: Rgb) {
+    /// `from_right` moves the pivot to the far end, so a tipping bed can lift
+    /// whichever way the truck happens to be facing.
+    pub fn shear_rect_dir(
+        &mut self,
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+        k: f32,
+        from_right: bool,
+        c: Rgb,
+    ) {
         for i in 0..w {
-            let dy = (k * i as f32) as i32;
+            let idx = if from_right { w - 1 - i } else { i };
+            let dy = (k * idx as f32) as i32;
             self.rect(x + i, y - dy, 1, h, c);
         }
     }

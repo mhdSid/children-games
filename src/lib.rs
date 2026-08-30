@@ -82,6 +82,28 @@ pub extern "C" fn turn(dir: u32) {
     games::get(current_id()).key(dir);
 }
 
+/// Turn the current game's vehicle around. No-op where nothing faces a way.
+#[no_mangle]
+pub extern "C" fn flip() {
+    games::get(current_id()).flip();
+}
+
+/// 1 if this game wants a turn-around button on the page.
+#[no_mangle]
+pub extern "C" fn can_flip() -> u32 {
+    if games::get(current_id()).can_flip() {
+        1
+    } else {
+        0
+    }
+}
+
+/// Which way the vehicle faces: 1 right, -1 left, 0 if it has no facing.
+#[no_mangle]
+pub extern "C" fn facing() -> i32 {
+    games::get(current_id()).facing()
+}
+
 /// Finger position in framebuffer space. Phase: 0 down, 1 move, 2 up.
 #[no_mangle]
 pub extern "C" fn pointer(x: f32, y: f32, phase: u32) {
