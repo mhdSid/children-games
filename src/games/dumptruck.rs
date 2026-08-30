@@ -10,11 +10,12 @@
 //! the ground there.
 
 use crate::engine::audio;
+use crate::engine::frame::DIRS8 as SPIN;
 use crate::engine::{clamp, fabs, height, lerp, sfx, width, Frame, Rgb, Rng, DOWN, MOVE, UP};
 use crate::games::Game;
 
 const ROCKS: usize = 12;
-const BED_SLOTS: usize = 4;
+const BED_SLOTS: usize = 6;
 const WORLD_SCALE: f32 = 3.2; // world is this many screens wide
 const TIP_MAX: f32 = 0.62;
 
@@ -26,18 +27,6 @@ const TRUCK_ABOVE_GROUND: f32 = 0.41;
 /// out of this too, or the truck clips the top of the screen driving uphill.
 const SKY_HEADROOM: f32 = 0.22;
 
-/// Unit vectors on an eighth turn, so wheels and tumbling rocks can rotate
-/// without `sin` or `cos` — neither of which exists in `core`.
-const SPIN: [(f32, f32); 8] = [
-    (1.0, 0.0),
-    (0.707, 0.707),
-    (0.0, 1.0),
-    (-0.707, 0.707),
-    (-1.0, 0.0),
-    (-0.707, -0.707),
-    (0.0, -1.0),
-    (0.707, -0.707),
-];
 
 // ------------------------------------------------------------------- colours
 
@@ -153,13 +142,13 @@ fn layout() -> L {
         rock_line: ground + truck_w * 0.125 + u * 0.03,
         horizon,
         truck_w,
-        bed_w: truck_w * 0.619,
+        bed_w: truck_w * 0.680,
         bed_h: truck_w * 0.274,
-        cab_w: truck_w * 0.351,
-        cab_h: truck_w * 0.351,
+        cab_w: truck_w * 0.292,
+        cab_h: truck_w * 0.330,
         wall: truck_w * 0.0357,
         wheel_r: truck_w * 0.101,
-        rock_r: truck_w * 0.090,
+        rock_r: truck_w * 0.082,
     }
 }
 
@@ -1219,9 +1208,9 @@ impl DumpTruck {
         // wheels, with lugs that turn as it drives
         let wy = (l.ground + l.wheel_r * 0.24) as i32 + sh;
         let wheels = [
-            self.bed_x(l) + l.bed_w * 0.30,
-            self.bed_x(l) + l.bed_w * 0.72,
-            self.cab_x(l) + l.cab_w * 0.46,
+            self.bed_x(l) + l.bed_w * 0.20,
+            self.bed_x(l) + l.bed_w * 0.62,
+            self.cab_x(l) + l.cab_w * 0.50,
         ];
         for &wx in &wheels {
             let px = (wx - self.cam) as i32;
@@ -1292,16 +1281,16 @@ impl DumpTruck {
         if held {
             fb.disc(cx, cy, ri + (r * 0.22) as i32, ROCK_HELD);
         }
-        fb.blob(cx, cy, ri, self.shape[i], body);
-        // The shaded underside, taken from the rock's own colour so sandstone
-        // is not shaded with granite grey. This used to be a flat rectangle,
-        // which read as a plinth once the outlines stopped being circles.
+        // The same shape again, darker and nudged down, so what shows beneath
+        // is a shadowed edge in the rock's own colour. A disc here left a
+        // rounded bottom poking out from under an angular rock.
         let dark = (
-            (body.0 as u16 * 72 / 100) as u8,
-            (body.1 as u16 * 72 / 100) as u8,
-            (body.2 as u16 * 72 / 100) as u8,
+            (body.0 as u16 * 70 / 100) as u8,
+            (body.1 as u16 * 70 / 100) as u8,
+            (body.2 as u16 * 70 / 100) as u8,
         );
-        fb.disc(cx, cy + (r * 0.46) as i32, (r * 0.44) as i32, dark);
+        fb.rock(cx, cy + (r * 0.16) as i32, ri, self.shape[i], dark);
+        fb.rock(cx, cy, ri, self.shape[i], body);
         // the highlight facet turns as the rock tumbles
         let idx = ((self.facet[i] as i32 + (self.spin[i] as i32)) % 8 + 8) as usize % 8;
         let (dx, dy) = SPIN[idx];

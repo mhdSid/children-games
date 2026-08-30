@@ -39,6 +39,19 @@ pub fn set_size(w: usize, h: usize) {
     }
 }
 
+/// Eight unit directions, an eighth-turn apart. Used for anything that needs
+/// to point somewhere without `sin` and `cos`, neither of which exists in core.
+pub const DIRS8: [(f32, f32); 8] = [
+    (1.0, 0.0),
+    (0.707, 0.707),
+    (0.0, 1.0),
+    (-0.707, 0.707),
+    (-1.0, 0.0),
+    (-0.707, -0.707),
+    (0.0, -1.0),
+    (0.707, -0.707),
+];
+
 pub struct Frame;
 
 impl Frame {
@@ -121,22 +134,57 @@ impl Frame {
         }
     }
 
-    /// A lumpy blob: four discs offset on an eighth-turn table, sized from the
-    /// low bits of `seed`. Deterministic, so a rock keeps its shape, and enough
-    /// to stop twelve rocks reading as twelve identical circles.
-    pub fn blob(&mut self, cx: i32, cy: i32, r: i32, seed: u32, c: Rgb) {
-        if r < 3 {
+    /// An eight-sided lump, each corner pushed out by a different amount taken
+    /// from `seed`. Rocks are not balls: flat faces and corners read as stone
+    /// where a disc reads as a bubble. Deterministic, so a rock keeps its shape
+    /// for life.
+    pub fn rock(&mut self, cx: i32, cy: i32, r: i32, seed: u32, c: Rgb) {
+        if r < 4 {
             self.disc(cx, cy, r, c);
             return;
         }
-        const OFF: [(i32, i32); 4] = [(-1, 0), (1, 0), (0, -1), (0, 1)];
-        self.disc(cx, cy, (r * 4) / 5, c);
-        for (k, (dx, dy)) in OFF.iter().enumerate() {
-            let bits = (seed >> (k * 3)) & 7;
-            let lobe = (r * (5 + bits as i32)) / 12;
-            let px = cx + dx * (r - lobe) / 2;
-            let py = cy + dy * (r - lobe) / 2;
-            self.disc(px, py, lobe, c);
+        let mut px = [0i32; 8];
+        let mut py = [0i32; 8];
+        for k in 0..8 {
+            let bits = ((seed >> (k * 3)) & 7) as f32;
+            let rad = r as f32 * (0.72 + bits * 0.055);
+            px[k] = cx + (DIRS8[k].0 * rad) as i32;
+            py[k] = cy + (DIRS8[k].1 * rad) as i32;
+        }
+
+        let (mut ymin, mut ymax) = (py[0], py[0]);
+        for k in 1..8 {
+            if py[k] < ymin {
+                ymin = py[k];
+            }
+            if py[k] > ymax {
+                ymax = py[k];
+            }
+        }
+
+        // Scanline fill: for each row, the span between the outermost edge
+        // crossings. Half-open on y so a shared corner is counted once.
+        for y in ymin..=ymax {
+            let mut lo = i32::MAX;
+            let mut hi = i32::MIN;
+            for k in 0..8 {
+                let j = (k + 1) % 8;
+                let (y0, y1) = (py[k], py[j]);
+                if (y0 <= y && y1 > y) || (y1 <= y && y0 > y) {
+                    let t = (y - y0) as f32 / (y1 - y0) as f32;
+                    let x = px[k] as f32 + (px[j] - px[k]) as f32 * t;
+                    let xi = x as i32;
+                    if xi < lo {
+                        lo = xi;
+                    }
+                    if xi > hi {
+                        hi = xi;
+                    }
+                }
+            }
+            if hi >= lo {
+                self.rect(lo, y, hi - lo + 1, 1, c);
+            }
         }
     }
 

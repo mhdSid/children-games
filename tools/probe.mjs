@@ -165,10 +165,10 @@ for (const [RW, RH] of [[480, 1039], [844, 390], [480, 480]]) {
 
   // ---- load, haul, dump
   let loaded = 0;
-  for (let pass = 0; pass < 6 && loaded < 4; pass++) {
+  for (let pass = 0; pass < 6 && loaded < 6; pass++) {
     toEnd(0); dragTruck(W * 0.42); tick(70);
     for (const r of rockClusters()) {
-      if (loaded >= 4) break;
+      if (loaded >= 5) break;
       const bed = bedBox(); if (!bed) break;
       w.pointer(r.x, r.y, DOWN);
       w.pointer(bed.mid, bed.ymid, MOVE);
@@ -178,7 +178,7 @@ for (const [RW, RH] of [[480, 1039], [844, 390], [480, 480]]) {
     }
   }
   ok(loaded >= 3, "rocks load into the bed (got " + loaded + ")");
-  ok(loaded <= 4, "bed capacity respected, never more than 4 (got " + loaded + ")");
+  ok(loaded <= 6, "bed capacity respected, never more than 6 (got " + loaded + ")");
 
   toEnd(1); tick(60);
   const site = truck();
