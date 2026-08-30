@@ -271,5 +271,38 @@ console.log("\n=== rock-on-rock landing ===");
   }
 }
 
+// ---------------------------------------------------------------------------
+// Slow dragging is where the motion used to fall apart, so it gets measured
+// rather than eyeballed: the truck's own drawn position, frame by frame.
+console.log("\n=== dragging the truck slowly ===");
+{
+  w.init(4242); w.select(1); w.resize(844, 390); tick(4);
+  const { W, H } = px();
+  const c = cabBox();
+  const startX = c.mid, y = c.ymid;
+
+  w.pointer(startX, y, DOWN);
+  const deltas = [];
+  let prev = truck().mid;
+  for (let i = 1; i <= 45; i++) {
+    w.pointer(startX + i * 2, y, MOVE);   // 2px a frame: deliberately slow
+    tick(1);
+    const now = truck().mid;
+    deltas.push(now - prev);
+    prev = now;
+  }
+  w.pointer(startX + 90, y, UP);
+
+  const moved = deltas.reduce((a, b) => a + b, 0);
+  const worst = Math.max(...deltas.map(Math.abs));
+  // once it is up to speed, direction must not keep reversing
+  const settled = deltas.slice(10);
+  const reversals = settled.filter(d => d < -0.5).length;
+
+  ok(moved > 0, `a slow drag actually moves the truck (${moved.toFixed(0)}px)`);
+  ok(worst < W * 0.04, `no frame jumps (worst ${worst.toFixed(1)}px of ${(W*0.04).toFixed(0)} allowed)`);
+  ok(reversals <= 2, `motion does not stutter backwards (${reversals} reversals in 35 frames)`);
+}
+
 console.log(fails === 0 ? "\nALL PASS" : `\n${fails} FAILURES`);
 process.exit(fails ? 1 : 0);

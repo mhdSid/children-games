@@ -158,6 +158,17 @@ Every noise — the engine, the hydraulics, the horn, rocks landing, the countin
 notes — is **made up on the spot** by the browser. There are no sound files.
 Turn it off in the hold-the-corner menu if you're on a bus.
 
+**No sound on a phone or iPad?** Two things, in this order:
+
+1. **Check the ringer / silent switch.** iPhones and iPads mute web audio
+   entirely when the hardware switch is set to silent, or when Silent Mode is
+   on in Control Centre. No web page can override this — it will look broken
+   and be working perfectly.
+2. **Touch the screen once.** Browsers refuse to start audio until you have.
+   Any tap does it. The hold-the-corner menu tells you which state it is in:
+   it reads *"Sound on (tap to start)"* until the browser has actually let it
+   begin.
+
 ---
 ---
 

@@ -564,16 +564,25 @@ impl DumpTruck {
         // per-second quantity instead of a per-event delta that assumed 60 Hz —
         // which is what used to make the camera jump on a fast drag.
         if self.grab == Grab::Truck {
-            let nx = clamp(self.drag_target, 0.0, l.world_w - l.truck_w);
-            self.tv = (nx - self.tx) / s;
-            self.tx = nx;
+            let want = clamp(self.drag_target, 0.0, l.world_w - l.truck_w);
+            // Follow the finger with a little weight rather than snapping to
+            // it. Snapping made the POSITION exact but the velocity spiky:
+            // pointer events arrive at a different rate than this fixed step,
+            // so one step saw a jump and the next saw nothing at all. The
+            // camera lead is driven by that velocity, so the whole world
+            // twitched — worst when he moved the truck slowly, which is when
+            // each step's jump is smallest and the on/off pattern loudest.
+            let follow = clamp(14.0 * s, 0.0, 1.0);
+            let dx = (want - self.tx) * follow;
+            self.tx += dx;
+            self.tv = dx / s;
         } else {
             // coast to a stop when he lets go
             self.tv *= 1.0 - 3.4 * s;
             self.tx += self.tv * s;
             self.tx = clamp(self.tx, 0.0, l.world_w - l.truck_w);
         }
-        self.tv_smooth += (self.tv - self.tv_smooth) * 6.0 * s;
+        self.tv_smooth += (self.tv - self.tv_smooth) * 8.0 * s;
         self.wheel_a += self.tv_smooth * s / (l.wheel_r * 0.9);
 
         // engine note follows speed; the host holds one oscillator for this
@@ -789,13 +798,22 @@ impl DumpTruck {
         // ----------------------------------------------------------- camera
         // Leads slightly in the direction of travel, the way a chase camera
         // does, and never shows past the ends of the world.
-        let lead = clamp(self.tv_smooth * 0.35, -l.w * 0.16, l.w * 0.16);
+        // No lead while his finger is on the truck. A chase camera leading the
+        // direction of travel is right for momentum, but during a direct drag
+        // it fights the hand: the lead is driven by velocity, velocity is
+        // sampled at the fixed step rather than at the pointer's rate, and the
+        // resulting wobble shows up as the truck stuttering backwards.
+        let lead = if self.grab == Grab::Truck {
+            0.0
+        } else {
+            clamp(self.tv_smooth * 0.22, -l.w * 0.12, l.w * 0.12)
+        };
         let want = clamp(
             self.tx + l.truck_w * 0.5 - l.w * 0.5 + lead,
             0.0,
             l.world_w - l.w,
         );
-        self.cam += (want - self.cam) * 4.0 * s;
+        self.cam += (want - self.cam) * 6.0 * s;
     }
 
     fn set_count(&mut self, n: u32) {

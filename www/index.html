@@ -442,7 +442,9 @@ const Sound = (() => {
   const NOTES = [392, 440, 523, 587, 659, 784, 880];
 
   function play(id, p) {
-    if (!ac || ac.state === "suspended") return;
+    // Not resumed yet: the document-level unlock below retries on every touch,
+    // so there is no point hammering resume() sixty times a second from here.
+    if (!ac || ac.state !== "running") return;
     switch (id) {
       case 0: tone("triangle", 300, 620, 0.10, 0.16); break;            // pickup
       case 1: thud(0.16, 700, 0.30); tone("sine", 180, 110, 0.12, 0.16); break; // seat
@@ -486,11 +488,22 @@ const Sound = (() => {
   }
 
   return {
-    // Browsers will not start audio until the user has touched the page.
+    // Browsers will not start audio until the user has touched the page, and
+    // iOS in particular wants a source to have actually run inside the gesture
+    // before it considers the graph live. Resuming alone is not enough there.
     unlock() {
       const c = ensure();
-      if (c && c.state === "suspended") c.resume();
+      if (!c) return;
+      if (c.state === "suspended") c.resume().catch(() => {});
+      try {
+        const b = c.createBuffer(1, 1, c.sampleRate);
+        const src = c.createBufferSource();
+        src.buffer = b;
+        src.connect(c.destination);
+        src.start(0);
+      } catch {}
     },
+    state: () => (ac ? ac.state : "none"),
     play,
     isMuted: () => muted,
     toggle() {
@@ -516,6 +529,13 @@ document.addEventListener("gesturestart",  stop, { passive: false });
 document.addEventListener("gesturechange", stop, { passive: false });
 document.addEventListener("contextmenu",   stop);
 document.addEventListener("dblclick",      stop, { passive: false });
+
+// Unlock from any first touch, wherever it lands — the canvas handler alone
+// misses taps that start on the menu, and misses them entirely if the module
+// has not finished loading yet.
+for (const ev of ["pointerdown", "touchend", "click"]) {
+  document.addEventListener(ev, () => Sound.unlock(), { capture: true });
+}
 
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) Sound.suspend(); else Sound.resume();
@@ -698,6 +718,7 @@ for (const ev of ["pointerup", "pointercancel", "pointerleave"]) {
 let sheetTimer = 0;
 
 function openSheet() {
+  paintMute();
   el("sheet").classList.add("open");
   clearTimeout(sheetTimer);
   // Closes itself, so an opened sheet left alone returns to the game.
@@ -710,7 +731,11 @@ function closeSheet() {
 }
 
 function paintMute() {
-  el("mute").textContent = Sound.isMuted() ? "Sound off" : "Sound on";
+  const st = Sound.state();
+  el("mute").textContent =
+    Sound.isMuted()      ? "Sound off" :
+    st === "running"     ? "Sound on"  :
+                           "Sound on (tap to start)";
 }
 el("mute").addEventListener("click", () => { Sound.unlock(); Sound.toggle(); paintMute(); });
 paintMute();
@@ -826,6 +851,14 @@ canvas.addEventListener("pointercancel", endPointer);
 canvas.addEventListener("lostpointercapture", (e) => {
   if (e.pointerId === activePointer) activePointer = null;
 });
+// Last resort: if the active pointer ends anywhere at all, let go of it. A
+// stuck id would ignore every future touch — no input and no sound, with no
+// way back short of a reload.
+for (const ev of ["pointerup", "pointercancel"]) {
+  window.addEventListener(ev, (e) => {
+    if (e.pointerId === activePointer) activePointer = null;
+  });
+}
 
 boot().catch((err) => {
   el("hint").hidden = false;
