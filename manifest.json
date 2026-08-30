@@ -1,0 +1,12 @@
+{
+  "name": "Children's Games",
+  "short_name": "Games",
+  "start_url": ".",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#12181e",
+  "theme_color": "#12181e",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

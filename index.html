@@ -12,6 +12,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Games">
+<link rel="manifest" href="manifest.json">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='10' fill='%2312181e'/%3E%3Crect x='8' y='26' width='30' height='18' fill='%23c99a2e'/%3E%3Crect x='38' y='20' width='18' height='24' fill='%23c8471f'/%3E%3Ccircle cx='18' cy='48' r='7' fill='%23262c30'/%3E%3Ccircle cx='46' cy='48' r='7' fill='%23262c30'/%3E%3C/svg%3E">
 <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%2312181e'/%3E%3Crect x='8' y='26' width='30' height='18' fill='%23c99a2e'/%3E%3Crect x='38' y='20' width='18' height='24' fill='%23c8471f'/%3E%3Ccircle cx='18' cy='48' r='7' fill='%23262c30'/%3E%3Ccircle cx='46' cy='48' r='7' fill='%23262c30'/%3E%3C/svg%3E">
 
@@ -308,6 +309,7 @@ body {
     <h2>Choose a game</h2>
     <div id="picks"></div>
     <div class="minor">
+      <button type="button" id="fresh">Start a fresh world</button>
       <button type="button" id="mute">Sound on</button>
       <button type="button" id="full" hidden>Full screen</button>
       <button type="button" id="close">Back to the game</button>
@@ -365,6 +367,7 @@ const Sound = (() => {
   const OFF_KEY = "games.muted";
   let ac = null, master = null, noiseBuf = null;
   let eng = null, engGain = null, engFilt = null;
+  let hyd = null, hydGain = null;
   let revNext = 0, revOn = false;
   let muted = false;
   try { muted = localStorage.getItem(OFF_KEY) === "1"; } catch { muted = false; }
@@ -396,6 +399,20 @@ const Sound = (() => {
     engGain.gain.value = 0;
     eng.connect(engFilt); engFilt.connect(engGain); engGain.connect(master);
     eng.start();
+
+    // The hydraulics are held too, so the note lasts exactly as long as the
+    // bed is moving instead of finishing early and leaving it rising silently.
+    hyd = ac.createOscillator();
+    hyd.type = "sawtooth";
+    hyd.frequency.value = 120;
+    hydGain = ac.createGain();
+    hydGain.gain.value = 0;
+    const hydFilt = ac.createBiquadFilter();
+    hydFilt.type = "bandpass";
+    hydFilt.frequency.value = 520;
+    hydFilt.Q.value = 3;
+    hyd.connect(hydFilt); hydFilt.connect(hydGain); hydGain.connect(master);
+    hyd.start();
     return ac;
   }
 
@@ -429,7 +446,13 @@ const Sound = (() => {
     switch (id) {
       case 0: tone("triangle", 300, 620, 0.10, 0.16); break;            // pickup
       case 1: thud(0.16, 700, 0.30); tone("sine", 180, 110, 0.12, 0.16); break; // seat
-      case 2: tone("sawtooth", 90, 300, 0.55, 0.05); break;             // hydraulics
+      case 2: {                                                          // hydraulics
+        if (!hydGain) break;
+        const t = ac.currentTime;
+        hydGain.gain.setTargetAtTime(p > 0 ? 0.020 + p * 0.030 : 0, t, 0.06);
+        hyd.frequency.setTargetAtTime(120 + p * 260, t, 0.07);
+        break;
+      }
       case 3: thud(0.20 + p * 0.16, 380 + p * 900, 0.20 + p * 0.45);    // rock lands
               tone("sine", 150 - p * 40, 70, 0.16, 0.10 + p * 0.12); break;
       case 4: tone("square", 392, 392, 0.26, 0.13);                     // horn
@@ -450,6 +473,10 @@ const Sound = (() => {
         }
         break;
       }
+      case 8:                                                            // rock onto rock
+        thud(0.13, 1900 + p * 2200, 0.16 + p * 0.30);
+        tone("triangle", 520 - p * 90, 300, 0.09, 0.07 + p * 0.06);
+        break;
       case 7: {                                                          // the count changed
         const n = Math.max(0, Math.min(NOTES.length - 1, Math.round(p)));
         tone("triangle", NOTES[n], NOTES[n], 0.20, 0.13);
@@ -688,6 +715,13 @@ function paintMute() {
 el("mute").addEventListener("click", () => { Sound.unlock(); Sound.toggle(); paintMute(); });
 paintMute();
 
+// Somewhere to start over. The truck game deliberately keeps everything he
+// does, so without this a world he is unhappy with is a world he is stuck in.
+el("fresh").addEventListener("click", () => {
+  if (wasm) wasm.restart();
+  closeSheet();
+});
+
 el("close").addEventListener("click", closeSheet);
 el("sheet").addEventListener("click", (e) => {
   if (e.target === el("sheet")) closeSheet();
@@ -700,7 +734,15 @@ if (document.fullscreenEnabled || document.webkitFullscreenEnabled) {
     if (document.fullscreenElement || document.webkitFullscreenElement) {
       (document.exitFullscreen || document.webkitExitFullscreen).call(document);
     } else {
-      (d.requestFullscreen || d.webkitRequestFullscreen).call(d, { navigationUI: "hide" });
+      Promise.resolve(
+        (d.requestFullscreen || d.webkitRequestFullscreen).call(d, { navigationUI: "hide" })
+      ).then(() => {
+        // Both orientations work; landscape simply suits a side-on driving
+        // game better, so ask for it and ignore a refusal.
+        if (screen.orientation && screen.orientation.lock) {
+          screen.orientation.lock("landscape").catch(() => {});
+        }
+      }).catch(() => {});
     }
   });
 }
@@ -741,27 +783,30 @@ function fbPoint(e) {
           (e.clientY - r.top)  * fh / r.height];
 }
 
-let sx = 0, sy = 0, dragging = false;
+// Exactly one finger drives the game. A small hand plants a palm, a thumb and
+// two more fingers on the glass at once; without this, every extra contact
+// started a fresh grab and the first finger's rock was left stuck mid-air.
+let sx = 0, sy = 0, activePointer = null;
 
 canvas.addEventListener("pointerdown", (e) => {
-  if (!wasm) return;
+  if (!wasm || activePointer !== null) return;   // a second finger is ignored
   e.preventDefault();
   Sound.unlock();
   canvas.setPointerCapture(e.pointerId);
-  dragging = true;
+  activePointer = e.pointerId;
   sx = e.clientX; sy = e.clientY;
   wasm.pointer(...fbPoint(e), DOWN);
 });
 
 canvas.addEventListener("pointermove", (e) => {
-  if (!wasm || !dragging) return;
+  if (!wasm || e.pointerId !== activePointer) return;
   e.preventDefault();
   wasm.pointer(...fbPoint(e), MOVE);
 });
 
 function endPointer(e) {
-  if (!wasm || !dragging) return;
-  dragging = false;
+  if (!wasm || e.pointerId !== activePointer) return;
+  activePointer = null;
   wasm.pointer(...fbPoint(e), UP);
 
   // Swipe-to-turn, for the games that steer.
@@ -778,6 +823,9 @@ function endPointer(e) {
 
 canvas.addEventListener("pointerup", endPointer);
 canvas.addEventListener("pointercancel", endPointer);
+canvas.addEventListener("lostpointercapture", (e) => {
+  if (e.pointerId === activePointer) activePointer = null;
+});
 
 boot().catch((err) => {
   el("hint").hidden = false;
