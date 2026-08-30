@@ -309,6 +309,7 @@ body {
     <h2>Choose a game</h2>
     <div id="picks"></div>
     <div class="minor">
+      <button type="button" id="test">Test sound</button>
       <button type="button" id="fresh">Start a fresh world</button>
       <button type="button" id="mute">Sound on</button>
       <button type="button" id="full" hidden>Full screen</button>
@@ -368,6 +369,25 @@ const Sound = (() => {
   let ac = null, master = null, noiseBuf = null;
   let eng = null, engGain = null, engFilt = null;
   let hyd = null, hydGain = null;
+  let silent = null;
+
+  // iPhones and iPads mute Web Audio outright when the ringer switch is set to
+  // silent. A looping (silent) media element moves the page onto the media
+  // playback path, which that switch does not gag. It is a workaround, not a
+  // guarantee — behaviour varies by iOS version.
+  const SILENT_WAV = "data:audio/wav;base64,UklGRrQBAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YZABAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICA";
+  function holdSession() {
+    if (silent) { silent.play().catch(() => {}); return; }
+    try {
+      silent = document.createElement("audio");
+      silent.setAttribute("playsinline", "");
+      silent.loop = true;
+      silent.preload = "auto";
+      silent.volume = 0.02;
+      silent.src = SILENT_WAV;
+      silent.play().catch(() => {});
+    } catch { silent = null; }
+  }
   let revNext = 0, revOn = false;
   let muted = false;
   try { muted = localStorage.getItem(OFF_KEY) === "1"; } catch { muted = false; }
@@ -492,6 +512,7 @@ const Sound = (() => {
     // iOS in particular wants a source to have actually run inside the gesture
     // before it considers the graph live. Resuming alone is not enough there.
     unlock() {
+      holdSession();
       const c = ensure();
       if (!c) return;
       if (c.state === "suspended") c.resume().catch(() => {});
@@ -504,6 +525,18 @@ const Sound = (() => {
       } catch {}
     },
     state: () => (ac ? ac.state : "none"),
+    /// An unmistakable noise, for working out whether the problem is the game
+    /// or the device.
+    test() {
+      this.unlock();
+      if (!ac || ac.state !== "running") return false;
+      const was = master.gain.value;
+      master.gain.value = 0.6;
+      tone("square", 523, 523, 0.18, 0.20);
+      setTimeout(() => tone("square", 784, 784, 0.22, 0.20), 190);
+      setTimeout(() => { master.gain.value = was; }, 500);
+      return true;
+    },
     play,
     isMuted: () => muted,
     toggle() {
@@ -742,6 +775,15 @@ paintMute();
 
 // Somewhere to start over. The truck game deliberately keeps everything he
 // does, so without this a world he is unhappy with is a world he is stuck in.
+el("test").addEventListener("click", () => {
+  const played = Sound.test();
+  el("test").textContent =
+    !played                ? "Blocked \u2014 tap again" :
+    Sound.isMuted()        ? "Muted \u2014 turn sound on" :
+                             "Heard nothing? Check the silent switch";
+  setTimeout(() => { el("test").textContent = "Test sound"; paintMute(); }, 3500);
+});
+
 el("fresh").addEventListener("click", () => {
   if (wasm) wasm.restart();
   closeSheet();
