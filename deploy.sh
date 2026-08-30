@@ -34,15 +34,18 @@ else
   echo "note: node not found, skipping the syntax check"
 fi
 
-nojekyll=$(printf '' | git hash-object -w --stdin)   # stop Pages running Jekyll
-wasm=$(git hash-object -w www/games.wasm)
-index=$(git hash-object -w www/index.html)
-
-# git mktree wants entries sorted by name
-tree=$(printf '100644 blob %s\t%s\n' \
-  "$nojekyll" ".nojekyll" \
-  "$wasm"     "games.wasm" \
-  "$index"    "index.html" | git mktree)
+# Everything in www/ goes, so adding a file there is all it takes to publish
+# it. git mktree wants the entries sorted by name.
+{
+  printf '100644 blob %s\t%s\n' \
+    "$(printf '' | git hash-object -w --stdin)" ".nojekyll"   # stop Pages running Jekyll
+  for f in www/*; do
+    [ -f "$f" ] || continue
+    printf '100644 blob %s\t%s\n' "$(git hash-object -w "$f")" "$(basename "$f")"
+  done
+} | sort -k2 > /tmp/gh-tree.$$
+tree=$(git mktree < /tmp/gh-tree.$$)
+rm -f /tmp/gh-tree.$$
 
 msg="Deploy $(git rev-parse --short HEAD)"
 if parent=$(git rev-parse -q --verify refs/heads/gh-pages); then

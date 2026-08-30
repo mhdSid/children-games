@@ -51,6 +51,10 @@ There is a quarry full of rocks and a big yellow truck.
 | **Taps the cab** | 📣 **HONK!** and the headlight flashes |
 | **Taps anything else** | a little puff of dust, because nothing should ever do nothing |
 
+Rocks come in three sizes and four kinds now — granite, sandstone, basalt, and
+one that is **not a rock at all**. Big ones land harder, bounce less, and roll
+more slowly than little ones.
+
 ### ⭐ The good bit
 
 **The rocks stay where he puts them.**
@@ -111,7 +115,17 @@ thing a small hand finds and presses by accident.
 Sliding your finger off cancels it. The menu closes itself after ten seconds.
 On a laptop: <kbd>Tab</kbd> opens it, <kbd>Esc</kbd> closes it.
 
-That menu is also where **Sound on / off** and **Full screen** live.
+That menu is also where **Start a fresh world**, **Sound on / off** and
+**Full screen** live.
+
+## 📱 Which way up?
+
+Both work. **Landscape suits it better** — it is a side-on driving game, so
+turning the tablet sideways gives the truck room and makes it much bigger. Added
+to the Home Screen it will ask for landscape by itself.
+
+Turning the device over mid-game keeps everything: the pile he built is still
+his pile, in the same place.
 
 ## 🔒 Handing over the tablet
 
@@ -293,6 +307,19 @@ driving from translation into a decision), a second vehicle, and somewhere for
 the rocks to *go* — a crusher, a hole to fill — so the pile has a purpose beyond
 existing.
 
+### Checking it
+
+```sh
+node tools/probe.mjs        # 64 assertions, driven through the real module
+node tools/shot.mjs 844 390 # render a frame to a PNG and look at it
+```
+
+`probe.mjs` inspects the framebuffer rather than mirroring the layout maths, so
+it fails when the picture is wrong rather than when a constant moves. It found
+every real bug in this game: rocks stacking on each other and climbing off the
+top of the world, piles walking sideways, a drag being read as a tap at the edge
+of the world, and rocks that were invisible behind the wheels.
+
 ### Deploying
 
 `main` holds the source. The playable build is the contents of `www/` published
@@ -301,5 +328,9 @@ to the `gh-pages` branch:
 ```sh
 ./deploy.sh
 ```
+
+It publishes everything in `www/`, and refuses to publish at all if the page's
+script does not parse — a syntax error there is invisible until someone opens
+the page, and by then it is live.
 
 </details>

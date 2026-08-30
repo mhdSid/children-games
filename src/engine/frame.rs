@@ -121,6 +121,25 @@ impl Frame {
         }
     }
 
+    /// A lumpy blob: four discs offset on an eighth-turn table, sized from the
+    /// low bits of `seed`. Deterministic, so a rock keeps its shape, and enough
+    /// to stop twelve rocks reading as twelve identical circles.
+    pub fn blob(&mut self, cx: i32, cy: i32, r: i32, seed: u32, c: Rgb) {
+        if r < 3 {
+            self.disc(cx, cy, r, c);
+            return;
+        }
+        const OFF: [(i32, i32); 4] = [(-1, 0), (1, 0), (0, -1), (0, 1)];
+        self.disc(cx, cy, (r * 4) / 5, c);
+        for (k, (dx, dy)) in OFF.iter().enumerate() {
+            let bits = (seed >> (k * 3)) & 7;
+            let lobe = (r * (5 + bits as i32)) / 12;
+            let px = cx + dx * (r - lobe) / 2;
+            let py = cy + dy * (r - lobe) / 2;
+            self.disc(px, py, lobe, c);
+        }
+    }
+
     pub fn dim(&mut self, amount: u16) {
         let live = width() * height() * 4;
         let buf = self.buf();

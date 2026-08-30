@@ -18,6 +18,14 @@ const BED_SLOTS: usize = 4;
 const WORLD_SCALE: f32 = 3.2; // world is this many screens wide
 const TIP_MAX: f32 = 0.62;
 
+/// How far the truck actually stands above the ground line, as a fraction of
+/// its width. Derived from the cab and chassis constants in `layout()`; if you
+/// change those, re-derive this.
+const TRUCK_ABOVE_GROUND: f32 = 0.41;
+/// Sky left above the cab. When terrain lands, the hills' amplitude has to come
+/// out of this too, or the truck clips the top of the screen driving uphill.
+const SKY_HEADROOM: f32 = 0.14;
+
 /// Unit vectors on an eighth turn, so wheels and tumbling rocks can rotate
 /// without `sin` or `cos` — neither of which exists in `core`.
 const SPIN: [(f32, f32); 8] = [
@@ -60,7 +68,10 @@ const LUG: Rgb = (120, 124, 128);
 
 const ROCK_C: Rgb = (129, 133, 137);
 const ROCK_LIGHT: Rgb = (166, 170, 174);
-const ROCK_DARK: Rgb = (94, 98, 102);
+const SAND_C: Rgb = (176, 148, 104);
+const SAND_LIGHT: Rgb = (206, 182, 142);
+const BASALT_C: Rgb = (86, 90, 98);
+const BASALT_LIGHT: Rgb = (120, 126, 136);
 const ROCK_HELD: Rgb = (233, 200, 120);
 const GEM: Rgb = (86, 160, 150);
 const GEM_LIGHT: Rgb = (140, 205, 194);
@@ -110,11 +121,20 @@ fn layout() -> L {
     let ground = h - u * 0.44;
     let horizon = ground - u * 0.09;
 
-    // The world is 2.4 screens wide, so the truck does not have to be small to
-    // leave room to drive — it only has to fit above the horizon.
+    // The world is WORLD_SCALE screens wide, so the truck does not have to be
+    // small to leave room to drive — it only has to fit above the horizon.
+    //
+    // The height budget is the truck's ACTUAL extent above the ground, which
+    // works out at 0.41 * truck_w from the constants below (cab 0.351, plus
+    // 0.058 of chassis lift). Budgeting the truck's *width* against the whole
+    // depth to the wheel line, as this used to, made it far too small in
+    // landscape — the aspect where the game reads best.
     let truck_w = {
-        let by_w = w * 0.55;
-        let by_h = ground * 0.95;
+        // A tall frame leaves the scene marooned in a band at the bottom, so
+        // the truck is allowed to take more of the width there. Landscape does
+        // not need it — the height budget below is the binding constraint.
+        let by_w = w * if h > w * 1.4 { 0.72 } else { 0.55 };
+        let by_h = (ground - u * SKY_HEADROOM) / TRUCK_ABOVE_GROUND;
         if by_w < by_h {
             by_w
         } else {
@@ -130,7 +150,7 @@ fn layout() -> L {
         ground,
         // Rocks live slightly in front of the truck. On the same line they
         // disappear behind the wheels and read as buried in the dirt.
-        rock_line: ground + u * 0.075,
+        rock_line: ground + truck_w * 0.125 + u * 0.03,
         horizon,
         truck_w,
         bed_w: truck_w * 0.619,
@@ -144,6 +164,31 @@ fn layout() -> L {
 }
 
 // -------------------------------------------------------------------- state
+
+/// Three sizes he can name, rather than a continuous smear. Categories are
+/// learnable; a spectrum is not.
+const PEBBLE: f32 = 0.70;
+const STONE: f32 = 1.00;
+const BOULDER: f32 = 1.35;
+
+#[derive(Clone, Copy, PartialEq)]
+enum Kind {
+    Granite,
+    Sandstone,
+    Basalt,
+    Gem,
+}
+
+impl Kind {
+    fn colors(self) -> (Rgb, Rgb) {
+        match self {
+            Kind::Granite => (ROCK_C, ROCK_LIGHT),
+            Kind::Sandstone => (SAND_C, SAND_LIGHT),
+            Kind::Basalt => (BASALT_C, BASALT_LIGHT),
+            Kind::Gem => (GEM, GEM_LIGHT),
+        }
+    }
+}
 
 #[derive(Clone, Copy, PartialEq)]
 enum Rock {
@@ -181,11 +226,14 @@ pub struct DumpTruck {
     facet: [u8; ROCKS],
     size: [f32; ROCKS], // radius multiplier, so they are not all identical
     spin: [f32; ROCKS],
-    special: [bool; ROCKS], // one of them is worth finding
+    kind: [Kind; ROCKS],
+    shape: [u32; ROCKS], // seed for the blob outline
 
     // truck
     tx: f32,
     tv: f32,
+    tv_smooth: f32,   // what the camera and the engine note read
+    drag_target: f32, // where the finger wants the truck; applied in step()
     wheel_a: f32,
     susp: f32, // suspension offset, positive is compressed
     susp_v: f32,
@@ -223,6 +271,12 @@ pub struct DumpTruck {
     accum: f32,
     moved: bool,
     ready: bool,
+
+    // the frame the current positions were computed for, so a resize can
+    // rescale the world instead of throwing it away
+    last_world_w: f32,
+    last_u: f32,
+    last_rock_line: f32,
 }
 
 impl DumpTruck {
@@ -237,9 +291,12 @@ impl DumpTruck {
             facet: [0; ROCKS],
             size: [1.0; ROCKS],
             spin: [0.0; ROCKS],
-            special: [false; ROCKS],
+            kind: [Kind::Granite; ROCKS],
+            shape: [0; ROCKS],
             tx: 0.0,
             tv: 0.0,
+            tv_smooth: 0.0,
+            drag_target: 0.0,
             wheel_a: 0.0,
             susp: 0.0,
             susp_v: 0.0,
@@ -268,6 +325,9 @@ impl DumpTruck {
             accum: 0.0,
             moved: false,
             ready: false,
+            last_world_w: 0.0,
+            last_u: 0.0,
+            last_rock_line: 0.0,
         }
     }
 
@@ -378,26 +438,43 @@ impl DumpTruck {
     fn deal(&mut self, l: &L, rng: &mut Rng) {
         // The quarry is the left end of the world; the rest is open ground to
         // build on.
+        // Three loose clusters rather than a ruler-straight line, but with a
+        // hard minimum gap: rocks closer than the stacking reach are read as
+        // piled on one another and build a staircase into the sky.
+        let min_gap = l.rock_r * (BOULDER + BOULDER) * 1.15;
+        let mut x = l.rock_r * 2.0;
         for i in 0..ROCKS {
-            self.size[i] = 0.78 + rng.unit() * 0.5;
+            self.size[i] = match rng.next() % 8 {
+                0 | 1 => PEBBLE,
+                2 => BOULDER,
+                _ => STONE,
+            };
+            self.kind[i] = match rng.next() % 16 {
+                0 => Kind::Gem,
+                1 | 2 | 3 => Kind::Sandstone,
+                4 | 5 => Kind::Basalt,
+                _ => Kind::Granite,
+            };
+            self.shape[i] = rng.next();
             self.facet[i] = (rng.next() % 4) as u8;
             self.spin[i] = 0.0;
-            self.special[i] = false;
             self.state[i] = Rock::Ground;
             self.vx[i] = 0.0;
             self.vy[i] = 0.0;
             self.slot[i] = 0;
 
-            // Spacing must clear the widest pair, or the stacking rule reads
-            // them as piled on each other and builds a staircase instead of
-            // laying them out. Biggest rock is 1.28r; 3.3r also leaves gaps to
-            // see the truck through. The field fills the left of the world and
-            // leaves the right open — somewhere to haul TO.
-            self.rx[i] = l.rock_r * 2.0 + i as f32 * l.rock_r * 3.3;
+            self.rx[i] = x;
             self.ry[i] = l.rock_line - l.rock_r * self.size[i];
+
+            // a gap inside a cluster, a bigger one between clusters
+            x += if i % 4 == 3 {
+                min_gap * (2.0 + rng.unit())
+            } else {
+                min_gap * (1.0 + rng.unit() * 0.5)
+            };
         }
-        // One rock is worth finding on the fiftieth play.
-        self.special[(rng.next() as usize) % ROCKS] = true;
+        // Always at least one gem, wherever the rolls landed.
+        self.kind[(rng.next() as usize) % ROCKS] = Kind::Gem;
 
         // Park the truck in the middle of the quarry, so the first thing on
         // screen is a truck surrounded by rocks.
@@ -410,6 +487,43 @@ impl DumpTruck {
         self.cam = clamp(self.tx + l.truck_w * 0.5 - l.w * 0.5, 0.0, l.world_w - l.w);
         self.count = 0;
         self.ready = true;
+        self.remember(l);
+    }
+
+    fn remember(&mut self, l: &L) {
+        self.last_world_w = l.world_w;
+        self.last_u = l.u;
+        self.last_rock_line = l.rock_line;
+    }
+
+    /// Carry the world across a change of frame shape. Rocks keep their
+    /// position as a fraction of the world, and their height as an offset from
+    /// the rock line scaled by the short side — so a pile he built stays a pile
+    /// he built when the tablet is turned over.
+    fn rescale(&mut self, l: &L) {
+        if self.last_world_w <= 0.0 || self.last_u <= 0.0 {
+            return;
+        }
+        let fx = l.world_w / self.last_world_w;
+        let fu = l.u / self.last_u;
+
+        for i in 0..ROCKS {
+            self.rx[i] *= fx;
+            let above = self.last_rock_line - self.ry[i];
+            self.ry[i] = l.rock_line - above * fu;
+            self.vx[i] *= fx;
+            self.vy[i] *= fu;
+        }
+        self.tx = clamp(self.tx * fx, 0.0, l.world_w - l.truck_w);
+        self.drag_target = self.tx;
+        self.tv = 0.0;
+        self.tv_smooth = 0.0;
+        self.cam = clamp(
+            self.tx + l.truck_w * 0.5 - l.w * 0.5,
+            0.0,
+            l.world_w - l.w,
+        );
+        self.remember(l);
     }
 
 
@@ -420,7 +534,6 @@ impl DumpTruck {
             self.spill_t = 0.0;
             // anticipation: the truck settles on its springs before it lifts
             self.susp_v += 220.0;
-            sfx(audio::TIP, 1.0);
         }
     }
 
@@ -446,17 +559,26 @@ impl DumpTruck {
         self.shake = if self.shake > 0.0 { self.shake - s * 5.0 } else { 0.0 };
 
         // ---------------------------------------------------------- driving
-        if self.grab != Grab::Truck {
+        // The pointer handler only records where the finger wants the truck.
+        // Moving it here, on the fixed timestep, is what makes velocity a real
+        // per-second quantity instead of a per-event delta that assumed 60 Hz —
+        // which is what used to make the camera jump on a fast drag.
+        if self.grab == Grab::Truck {
+            let nx = clamp(self.drag_target, 0.0, l.world_w - l.truck_w);
+            self.tv = (nx - self.tx) / s;
+            self.tx = nx;
+        } else {
             // coast to a stop when he lets go
             self.tv *= 1.0 - 3.4 * s;
             self.tx += self.tv * s;
             self.tx = clamp(self.tx, 0.0, l.world_w - l.truck_w);
         }
-        self.wheel_a += self.tv * s / (l.wheel_r * 0.9);
+        self.tv_smooth += (self.tv - self.tv_smooth) * 6.0 * s;
+        self.wheel_a += self.tv_smooth * s / (l.wheel_r * 0.9);
 
         // engine note follows speed; the host holds one oscillator for this
         let speed = {
-            let v = fabs(self.tv) / (l.w * 0.9);
+            let v = fabs(self.tv_smooth) / (l.w * 0.9);
             if v > 1.0 {
                 1.0
             } else {
@@ -466,7 +588,7 @@ impl DumpTruck {
         sfx(audio::ENGINE, speed);
         sfx(
             audio::REVERSE,
-            if self.tv < -l.w * 0.06 { 1.0 } else { 0.0 },
+            if self.tv_smooth < -l.w * 0.06 { 1.0 } else { 0.0 },
         );
 
         // exhaust, always, so an untouched screen is never a still image
@@ -537,6 +659,15 @@ impl DumpTruck {
             }
             Tip::Idle => {}
         }
+        // Hydraulics are a held note that tracks the bed, like the engine —
+        // not a one-shot that finishes long before the bed does.
+        sfx(
+            audio::TIP,
+            match self.phase {
+                Tip::Squat | Tip::Raising | Tip::Lowering => self.tip / TIP_MAX + 0.15,
+                _ => 0.0,
+            },
+        );
 
         // Rocks leave one at a time so the numeral ticks down rather than
         // snapping to zero. That tick is the whole counting lesson.
@@ -575,19 +706,35 @@ impl DumpTruck {
                     self.rx[i] += self.vx[i] * s;
                     self.ry[i] += self.vy[i] * s;
                     self.vx[i] *= 1.0 - 1.5 * s;
-                    self.spin[i] += self.vx[i] * s * 0.06;
+                    self.spin[i] += self.vx[i] * s / (r * 0.9); // big rocks turn slower
 
                     let floor = self.rest_y(l, self.rx[i], self.ry[i], r, i);
                     if self.ry[i] >= floor {
                         self.ry[i] = floor;
                         let impact = fabs(self.vy[i]) / (l.u * 0.9);
                         if fabs(self.vy[i]) > l.u * 0.35 {
-                            self.vy[i] = -self.vy[i] * 0.30;
+                            // heavier rocks keep less of the bounce
+                            let restitution = 0.30 * (1.0 - 0.30 * (self.size[i] - PEBBLE));
+                            self.vy[i] = -self.vy[i] * restitution;
                             self.vx[i] *= 0.55;
-                            sfx(audio::LAND, if impact > 1.0 { 1.0 } else { impact });
+                            let hit = if floor < l.rock_line - r - 1.0 {
+                                audio::ROCK_HIT // came to rest on another rock
+                            } else {
+                                audio::LAND
+                            };
+                            sfx(hit, if impact > 1.0 { 1.0 } else { impact });
                             self.shake = if impact > 0.6 { 0.6 } else { impact };
                             self.puff(self.rx[i], self.ry[i] + r * 0.6);
                         } else {
+                            // A gentle landing still makes a noise. Silence
+                            // here breaks the rule the whole game is built on:
+                            // everything he does answers back.
+                            let soft = if floor < l.rock_line - r - 1.0 {
+                                audio::ROCK_HIT
+                            } else {
+                                audio::LAND
+                            };
+                            sfx(soft, 0.12);
                             self.vy[i] = 0.0;
                             self.vx[i] = 0.0;
                             self.state[i] = Rock::Ground;
@@ -642,7 +789,7 @@ impl DumpTruck {
         // ----------------------------------------------------------- camera
         // Leads slightly in the direction of travel, the way a chase camera
         // does, and never shows past the ends of the world.
-        let lead = clamp(self.tv * 0.35, -l.w * 0.16, l.w * 0.16);
+        let lead = clamp(self.tv_smooth * 0.35, -l.w * 0.16, l.w * 0.16);
         let want = clamp(
             self.tx + l.truck_w * 0.5 - l.w * 0.5 + lead,
             0.0,
@@ -678,6 +825,24 @@ impl Game for DumpTruck {
         self.deal(&l, rng);
     }
 
+    fn relayout(&mut self, rng: &mut Rng) {
+        let l = layout();
+        if !self.ready {
+            self.reset(rng);
+            return;
+        }
+        // A rock in flight or in hand has nowhere sensible to go at a new
+        // scale; put it down before rescaling.
+        self.grab = Grab::None;
+        for i in 0..ROCKS {
+            if matches!(self.state[i], Rock::Held | Rock::Falling) {
+                self.state[i] = Rock::Falling;
+                self.vx[i] = 0.0;
+            }
+        }
+        self.rescale(&l);
+    }
+
     fn update(&mut self, dt: f32, rng: &mut Rng) -> bool {
         let l = layout();
         if !self.ready {
@@ -699,13 +864,29 @@ impl Game for DumpTruck {
 
         match phase {
             DOWN => {
+                // A second contact cannot steal the first. The page filters
+                // extra pointers too, but a small hand plants three fingers at
+                // once and this is the layer that can actually be tested.
+                if self.grab != Grab::None {
+                    return;
+                }
                 self.moved_far = false;
                 self.grab_x0 = x;
                 self.grab_y0 = y;
 
                 // Nearest grabbable rock wins, by squared distance — no sqrt.
                 let mut pick = -1i32;
-                let mut best = (l.rock_r * 2.4) * (l.rock_r * 2.4);
+                // A wide, forgiving grab — except right on the cab, where a
+                // nearby rock would otherwise steal the taps meant for the
+                // horn. Gating on the whole truck instead would disable the
+                // wide radius exactly where the rocks are once he has driven
+                // over to them.
+                let reach = if self.on_cab(&l, x, y) {
+                    l.rock_r * 2.4
+                } else {
+                    l.rock_r * 3.8
+                };
+                let mut best = reach * reach;
                 for i in 0..ROCKS {
                     // Only rocks on the ground. A rock in the bed must not be
                     // grabbable: it sits exactly where the hand lands to drive
@@ -737,6 +918,7 @@ impl Game for DumpTruck {
                     // Drag to drive, tap to tip — decided on release.
                     self.grab = Grab::Truck;
                     self.grab_off = self.tx - x;
+                    self.drag_target = self.tx;
                     self.tv = 0.0;
                 } else {
                     // No dead pixels: a touch on nothing still does something.
@@ -756,8 +938,9 @@ impl Game for DumpTruck {
                     self.moved = true;
                 }
                 Grab::Truck => {
-                    let want = clamp(x + self.grab_off, 0.0, l.world_w - l.truck_w);
-                    let dx = want - self.tx;
+                    // Record the intent only. step() moves the truck and
+                    // derives the velocity from real elapsed time.
+                    self.drag_target = clamp(x + self.grab_off, 0.0, l.world_w - l.truck_w);
                     // Drag versus tap is decided by how far the FINGER moved,
                     // not the truck. Judging it by the truck means that once
                     // it is pinned against the end of the world every push
@@ -765,10 +948,6 @@ impl Game for DumpTruck {
                     if fabs(x - self.grab_x0) > l.u * 0.022 {
                         self.moved_far = true;
                     }
-                    // velocity comes from the drag, so the wheels and the
-                    // engine note follow the hand
-                    self.tv = dx * 60.0;
-                    self.tx = want;
                     self.moved = true;
                 }
                 Grab::None => {}
@@ -1090,23 +1269,21 @@ impl DumpTruck {
             return;
         }
 
-        let (body, light) = if self.special[i] {
-            (GEM, GEM_LIGHT)
-        } else {
-            (ROCK_C, ROCK_LIGHT)
-        };
+        let (body, light) = self.kind[i].colors();
 
         if held {
             fb.disc(cx, cy, ri + (r * 0.22) as i32, ROCK_HELD);
         }
-        fb.disc(cx, cy, ri, body);
-        fb.rect(
-            cx - ri + ri / 5,
-            cy + ri - ri / 3,
-            ri * 2 - ri * 2 / 5,
-            ri / 3,
-            ROCK_DARK,
+        fb.blob(cx, cy, ri, self.shape[i], body);
+        // The shaded underside, taken from the rock's own colour so sandstone
+        // is not shaded with granite grey. This used to be a flat rectangle,
+        // which read as a plinth once the outlines stopped being circles.
+        let dark = (
+            (body.0 as u16 * 72 / 100) as u8,
+            (body.1 as u16 * 72 / 100) as u8,
+            (body.2 as u16 * 72 / 100) as u8,
         );
+        fb.disc(cx, cy + (r * 0.46) as i32, (r * 0.44) as i32, dark);
         // the highlight facet turns as the rock tumbles
         let idx = ((self.facet[i] as i32 + (self.spin[i] as i32)) % 8 + 8) as usize % 8;
         let (dx, dy) = SPIN[idx];

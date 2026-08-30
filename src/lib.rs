@@ -117,14 +117,13 @@ pub extern "C" fn frame_h() -> u32 {
     engine::height() as u32
 }
 
-/// Resize the framebuffer to match the space the page has for it, then deal
-/// the current game again — the board geometry is derived from these numbers,
-/// so it cannot survive a change of shape.
+/// Resize the framebuffer to match the space the page has for it. Games that
+/// can carry their state across a change of shape do so; the rest deal again.
 #[no_mangle]
 pub extern "C" fn resize(w: u32, h: u32) {
     set_size(w as usize, h as usize);
     let g = games::get(current_id());
-    g.reset(rng());
+    g.relayout(rng());
     g.draw(&mut Frame::new());
 }
 

@@ -18,6 +18,15 @@ pub trait Game {
 
     fn draw(&mut self, fb: &mut Frame);
 
+    /// The framebuffer changed shape. The default is to deal again, which is
+    /// the only honest answer for a game whose board geometry is derived from
+    /// the frame (snake's grid cannot be reinterpreted at a new aspect). A game
+    /// holding state the player built should override this and rescale it —
+    /// losing his work because he turned the tablet over is not acceptable.
+    fn relayout(&mut self, rng: &mut Rng) {
+        self.reset(rng);
+    }
+
     /// Framebuffer-space finger position and what it just did.
     fn pointer(&mut self, _x: f32, _y: f32, _phase: u32, _rng: &mut Rng) {}
 
