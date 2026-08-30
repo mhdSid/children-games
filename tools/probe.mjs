@@ -130,10 +130,13 @@ for (const [RW, RH] of [[480, 1039], [844, 390], [480, 480]]) {
   const t0 = truck();
   ok(t0 !== null, "truck is drawn and on screen");
   if (W > H) {
-    // A1: the truck used to be sized by budgeting its WIDTH against the full
-    // depth to the wheel line, which starved it in landscape.
-    ok((t0.hi - t0.lo) / W > 0.45,
-       `truck fills landscape properly (${((t0.hi-t0.lo)/W).toFixed(2)} of width)`);
+    // A band, not a floor. The truck used to be sized by budgeting its WIDTH
+    // against the full depth to the wheel line, which starved it in landscape
+    // at about 0.19 — but 0.47 was tried and looked domineering, with almost
+    // none of the world visible around it.
+    const frac = (t0.hi - t0.lo) / W;
+    ok(frac > 0.30 && frac < 0.45,
+       `truck is proportionate in landscape (${frac.toFixed(2)} of width)`);
   }
 
   dragTruck(W * 0.15); tick(60);
