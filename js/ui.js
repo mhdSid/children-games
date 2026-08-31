@@ -73,48 +73,6 @@ export function closeSheet () {
   el("sheet").classList.remove("open")
 }
 
-/* ------------------------------------------------------- the corner hold
-   The only way to change games. There is deliberately no button: a floating
-   one is exactly the thing a small hand finds and presses. */
-
-const HOLD_MS = 1600
-
-function cornerHold (onDone) {
-  let id = null, start = 0, raf = 0, hx = 0, hy = 0
-
-  const end = () => {
-    cancelAnimationFrame(raf)
-    id = null
-    el("ring").classList.remove("on")
-    el("ring").style.setProperty("--p", 0)
-  }
-
-  const step = (now) => {
-    const p = Math.min(1, (now - start) / HOLD_MS)
-    el("ring").style.setProperty("--p", p.toFixed(3))
-    if (p >= 1) { end(); onDone(); return }
-    raf = requestAnimationFrame(step)
-  }
-
-  el("hold").addEventListener("pointerdown", (e) => {
-    e.preventDefault()
-    el("hold").setPointerCapture(e.pointerId)
-    id = e.pointerId
-    hx = e.clientX; hy = e.clientY
-    start = performance.now()
-    el("ring").classList.add("on")
-    raf = requestAnimationFrame(step)
-  })
-
-  // Sliding off cancels: this has to be a deliberate, steady hold.
-  el("hold").addEventListener("pointermove", (e) => {
-    if (id === e.pointerId && Math.hypot(e.clientX - hx, e.clientY - hy) > 28) end()
-  })
-  for (const ev of ["pointerup", "pointercancel", "pointerleave"]) {
-    el("hold").addEventListener(ev, (e) => { if (id === e.pointerId) end() })
-  }
-}
-
 /* ------------------------------------------------------------------ wiring */
 
 export function wireUi (wasm, { onPick, onRestart }) {
@@ -134,7 +92,7 @@ export function wireUi (wasm, { onPick, onRestart }) {
   }
   host.append(wrap)
 
-  cornerHold(openSheet)
+  el("menu").addEventListener("click", openSheet)
 
   el("close").addEventListener("click", closeSheet)
   el("sheet").addEventListener("click", (e) => {
@@ -146,15 +104,6 @@ export function wireUi (wasm, { onPick, onRestart }) {
   el("fresh").addEventListener("click", () => { onRestart(); closeSheet() })
 
   el("mute").addEventListener("click", () => { Sound.unlock(); Sound.toggle(); paintMute() })
-
-  el("test").addEventListener("click", () => {
-    const played = Sound.test()
-    el("test").textContent =
-      !played         ? "Blocked — tap again" :
-        Sound.isMuted() ? "Muted — turn sound on" :
-          "Heard nothing? Check the silent switch"
-    setTimeout(() => { el("test").textContent = "Test sound"; paintMute() }, 3500)
-  })
 
   if (canFullscreen()) {
     el("full").hidden = false
