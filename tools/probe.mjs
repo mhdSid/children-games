@@ -385,6 +385,11 @@ console.log("\n=== the pond ===")
   tick(400)
   ok(w.score() > 1, "he can keep throwing (" + w.score() + " so far)")
 
+  // a touch on open water always answers
+  sfx.length = 0
+  w.pointer(W * 0.5, H * 0.5, DOWN); w.pointer(W * 0.5, H * 0.5, UP); tick(4)
+  ok(sfx.length > 0, "a touch on open water rings, rather than doing nothing")
+
   const p = px()
   ok(p.d[(W * H - 1) * 4 + 3] === 255, "the frame is fully painted")
   const uniq = new Set()

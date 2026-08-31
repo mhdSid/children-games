@@ -354,7 +354,62 @@ pub fn wave(t: f32) -> f32 {
     } else {
         (-1.0, (p - 0.5) * 2.0)
     };
-    sign * 4.0 * u * (1.0 - u)
+    // The bare parabola is 6% out at the quarter turn, which is enough to make
+    // a "circle" drawn from it look like a diamond. One refinement pass brings
+    // it inside a tenth of a percent, which is far better than a pond needs.
+    let s = 4.0 * u * (1.0 - u);
+    sign * s * (0.775 + 0.225 * s)
+}
+
+/// The quarter-turn companion to `wave`, so a point can be put on a circle.
+#[inline]
+pub fn wave_q(t: f32) -> f32 {
+    wave(t + 0.25)
+}
+
+/// Cheap deterministic hash, for scattering things that must look scattered
+/// and then stay put.
+#[inline]
+pub fn hash(n: u32) -> u32 {
+    let mut x = n.wrapping_mul(2654435761);
+    x ^= x >> 15;
+    x = x.wrapping_mul(2246822519);
+    x ^= x >> 13;
+    x
+}
+
+/// A ring drawn as broken dashes around an ellipse.
+///
+/// Ripples on real water are not circles anyone drew: they are arcs that fade
+/// in and out, cross each other, and never quite close. Skipping runs of the
+/// ring by a hash is what turns a geometric circle into one of those.
+pub fn arc_dashes(
+    fb: &mut Frame,
+    cx: f32,
+    cy: f32,
+    rx: f32,
+    ry: f32,
+    seed: u32,
+    thick: i32,
+    c: Rgb,
+) {
+    if rx < 2.0 || ry < 2.0 {
+        return;
+    }
+    let steps = ((rx + ry) * 1.6) as u32;
+    if steps == 0 {
+        return;
+    }
+    for i in 0..steps {
+        // dashes about eight samples long, present roughly two times in three
+        if hash(seed ^ (i / 8)) % 3 == 0 {
+            continue;
+        }
+        let t = i as f32 / steps as f32;
+        let x = cx + rx * wave_q(t);
+        let y = cy + ry * wave(t);
+        fb.rect(x as i32, y as i32, thick, thick, c);
+    }
 }
 
 /// Ellipse outline, thickness `th`. Ripples on a pond seen at an angle are

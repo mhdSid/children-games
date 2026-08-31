@@ -141,9 +141,16 @@ Every one of them answers a touch, and every one of them has its own voice.
 | **Snails** | do almost nothing, extremely slowly, which is the joke |
 | **Fish** | flash orange under the surface and dart from a splash |
 
-Stones that sink **stay on the bottom**, so the pool slowly fills with
-everything he has ever thrown. Fresh pebbles wash up on the rim, so he can
-never run out.
+Stones that sink **stay on the bottom** — and he can reach in and take any of
+them back out to throw again. Fresh pebbles wash up on the rim the moment he
+picks one, so there is never a second where there is nothing to throw.
+
+Every stone he can pick up wears a **pale outline** that breathes very slowly.
+That is how he tells the ones he can throw from the boulders he cannot.
+
+**Nothing on the screen is dead.** Touch the water and it rings. Touch a lily
+pad and it bobs. Touch a boulder and it knocks. Touch anything alive and it
+answers in its own voice.
 
 ---
 
@@ -183,11 +190,11 @@ This one you *can* lose — and that's fine, it's the only one that can.
 There is **no button on screen** — on purpose. A floating button is exactly the
 thing a small hand finds and presses by accident.
 
-> **Press and hold the top-left corner for about 2 seconds.**
-> A ring fills up while you hold. Then pick a game.
+> **The small dotted button in the top-left corner.**
 
-Sliding your finger off cancels it. The menu closes itself after ten seconds.
-On a laptop: <kbd>Tab</kbd> opens it, <kbd>Esc</kbd> closes it.
+It is the quietest thing on the screen on purpose — small, translucent, tucked
+into the corner. The menu closes itself after ten seconds. On a laptop:
+<kbd>Tab</kbd> opens it, <kbd>Esc</kbd> closes it.
 
 That menu is also where **Start a fresh world**, **Sound on / off** and
 **Full screen** live.

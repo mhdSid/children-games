@@ -186,37 +186,30 @@ body {
   #turn svg { width: 20px; height: 20px; }
 }
 
-/* ------------------------------------------------------------- corner hold
-   The only way to change games. Invisible until it is being used, sized for
-   an adult thumb in the very corner, and it needs a steady hold — none of
-   which a two-year-old does by accident. */
+/* ----------------------------------------------------------------- the menu
+   A real button now, but the quietest one on the screen: small, translucent,
+   and tucked into the corner. */
 
-#hold {
+.menu-btn {
   position: fixed;
-  top: 0;
-  left: 0;
-  width: 84px;
-  height: 84px;
-  touch-action: none;
-  z-index: 5;
-}
-
-#ring {
-  position: absolute;
   top: calc(env(safe-area-inset-top) + 12px);
   left: calc(env(safe-area-inset-left) + 12px);
   width: 40px;
   height: 40px;
-  border-radius: 50%;
-  opacity: 0;
-  transition: opacity .12s;
-  background:
-    conic-gradient(var(--brass) calc(var(--p, 0) * 1turn), rgba(255,255,255,.13) 0);
-  -webkit-mask: radial-gradient(circle, transparent 58%, #000 60%);
-          mask: radial-gradient(circle, transparent 58%, #000 60%);
-  pointer-events: none;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid rgb(255 255 255 / 12%);
+  border-radius: 12px;
+  background: rgb(18 24 30 / 30%);
+  backdrop-filter: blur(4px);
+  color: rgb(230 237 233 / 55%);
+  cursor: pointer;
+  touch-action: manipulation;
+  z-index: 5;
 }
-#ring.on { opacity: 1; }
+.menu-btn svg { width: 20px; height: 20px; fill: currentcolor; }
+.menu-btn:active { background: var(--brass-dim); color: var(--brass); }
 
 /* -------------------------------------------------------------- the switcher */
 

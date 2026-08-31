@@ -9,7 +9,7 @@
 //! pond slowly fills with everything he has ever thrown, and fresh pebbles wash
 //! up on the bank so he can never run out.
 
-use crate::engine::frame::{ellipse, wave, DIRS8};
+use crate::engine::frame::{arc_dashes, ellipse, hash, wave, wave_q, DIRS8};
 use crate::engine::{audio, clamp, fabs, sfx, Frame, Rgb, Rng, DOWN, MOVE, UP};
 use crate::games::Game;
 
@@ -18,7 +18,8 @@ const RIPPLES: usize = 14;
 const LILIES: usize = 7;
 const FISH: usize = 5;
 const REEDS: usize = 26;
-const BOULDERS: usize = 6;
+const BOULDERS: usize = 14;
+const RIM_STONES: usize = 38;
 const CRITTERS: usize = 15;
 
 // ------------------------------------------------------------------- colours
@@ -44,6 +45,7 @@ const DEEP: Rgb = (70, 106, 128);
 const GLINT: Rgb = (186, 216, 224);
 const CAUSTIC: Rgb = (158, 198, 212);
 const FOAM: Rgb = (238, 248, 250);
+const PICKABLE: Rgb = (250, 246, 224);
 
 const STONE: Rgb = (196, 186, 164);
 const STONE_LIGHT: Rgb = (224, 216, 196);
@@ -76,16 +78,19 @@ const SNAIL_SHELL: Rgb = (168, 118, 70);
 const WING: Rgb = (198, 226, 234);
 const DFLY: Rgb = (86, 158, 196);
 
-/// Bright, nameable pebbles. A grey pond would be a sad pond.
+/// Pebbles a river would actually produce: warm and cool stones, each clearly
+/// a different one, none of them shouting. Saturated toys sat on top of this
+/// scene rather than in it — the outline is what makes them findable, not the
+/// colour.
 const PEBBLES: [(Rgb, Rgb); 8] = [
-    ((214, 88, 72), (238, 138, 122)),   // red
-    ((236, 166, 60), (250, 206, 122)),  // amber
-    ((92, 164, 206), (150, 208, 236)),  // blue
-    ((118, 176, 96), (166, 212, 146)),  // green
-    ((166, 128, 200), (206, 178, 232)), // violet
-    ((236, 226, 208), (252, 246, 236)), // chalk
-    ((122, 128, 136), (168, 174, 182)), // slate
-    ((238, 132, 168), (252, 186, 208)), // pink
+    ((196, 148, 112), (226, 186, 152)), // sandstone
+    ((208, 178, 130), (238, 214, 174)), // warm tan
+    ((146, 158, 166), (186, 198, 204)), // river grey
+    ((160, 168, 142), (198, 206, 180)), // olive
+    ((186, 144, 138), (220, 184, 178)), // dusty rose
+    ((226, 218, 200), (246, 240, 228)), // chalk
+    ((118, 126, 134), (158, 166, 174)), // slate
+    ((172, 152, 176), (208, 192, 210)), // lilac grey
 ];
 
 // -------------------------------------------------------------------- state
@@ -229,9 +234,12 @@ impl Pond {
         1.0 - (dx * dx + dy * dy)
     }
 
+    /// Big. A stone has to be a comfortable target for a two-year-old's
+    /// fingertip, which is far larger than a stone would realistically be —
+    /// so the stones are unrealistic and the game works.
     fn rock_r(&self, w: f32, h: f32, i: usize) -> f32 {
         let u = if w < h { w } else { h };
-        u * 0.030 * self.size[i]
+        u * 0.055 * self.size[i]
     }
 
     fn ripple(&mut self, x: f32, y: f32) {
@@ -243,10 +251,13 @@ impl Pond {
     /// hand already is.
     fn place_on_bank(&mut self, w: f32, h: f32, i: usize, rng: &mut Rng) {
         let u = if w < h { w } else { h };
+        // On the bank ring just outside the water, where the stones would
+        // really be — not scattered out over the dark floor.
         loop {
-            let x = u * 0.06 + rng.unit() * (w - u * 0.12);
-            let y = u * 0.06 + rng.unit() * (h - u * 0.12);
-            if self.depth(w, h, x, y) < -0.06 {
+            let x = u * 0.04 + rng.unit() * (w - u * 0.08);
+            let y = u * 0.04 + rng.unit() * (h - u * 0.08);
+            let d = self.depth(w, h, x, y);
+            if d < -0.02 && d > -0.55 {
                 self.x[i] = x;
                 self.y[i] = y;
                 break;
@@ -269,7 +280,7 @@ impl Pond {
         for i in 0..ROCKS {
             self.kind[i] = (rng.next() % PEBBLES.len() as u32) as u8;
             self.shape[i] = rng.next();
-            self.size[i] = 0.72 + rng.unit() * 0.7;
+            self.size[i] = 0.80 + rng.unit() * 0.45;
             self.sunk_at[i] = 0.0;
             self.place_on_bank(w, h, i, rng);
         }
@@ -294,11 +305,14 @@ impl Pond {
         // a real pool: mostly round the edge, a couple out in the middle.
         for k in 0..BOULDERS {
             let a = (k as f32 + 0.35) / BOULDERS as f32;
-            let reach = if k % 3 == 0 { 0.42 } else { 0.86 };
+            // scattered right across the pool, not just round the edge
+            let hh = crate::engine::frame::hash(k as u32 * 31 + 7);
+            let reach = 0.20 + ((hh & 255) as f32 / 255.0) * 0.72;
+            let ang = a + ((hh >> 8) & 255) as f32 / 255.0 * 0.06;
             self.boulders[k] = (
-                cx + wave(a) * rx * reach,
-                cy + wave(a + 0.31) * ry * reach,
-                0.7 + rng.unit() * 0.8
+                cx + wave_q(ang) * rx * reach,
+                cy + wave(ang) * ry * reach,
+                0.55 + ((hh >> 16) & 255) as f32 / 255.0 * 0.85
             );
         }
         for k in 0..REEDS {
@@ -660,7 +674,12 @@ impl Game for Pond {
                 let mut pick = -1i32;
                 let mut best = (u * 0.14) * (u * 0.14); // a generous reach
                 for i in 0..ROCKS {
-                    if !matches!(self.state[i], Pebble::Bank | Pebble::Landed) {
+                    // Sunk ones too: he should be able to reach in and take
+                    // back anything he has already thrown.
+                    if !matches!(
+                        self.state[i],
+                        Pebble::Bank | Pebble::Landed | Pebble::Sunk
+                    ) {
                         continue;
                     }
                     let dx = x - self.x[i];
@@ -688,7 +707,44 @@ impl Game for Pond {
                     self.held = pick;
                     self.grab_dx = self.x[i] - x;
                     self.grab_dy = self.y[i] - y;
-                    self.z[i] = u * 0.05; // lifted, so it casts a shadow at once
+                    // lifted at once, so it already casts a shadow in his hand
+                    self.z[i] = u * 0.05;
+                    sfx(audio::PLIP, 0.5);
+                } else {
+                    // Nothing under the finger — but a touch always answers.
+                    // A boulder knocks, a lily bobs, open water rings.
+                    let mut hit = false;
+                    for k in 0..BOULDERS {
+                        let (bx, by, sc) = self.boulders[k];
+                        let br = u * 0.055 * sc;
+                        if fabs(x - bx) + fabs(y - by) < br * 1.6 {
+                            sfx(audio::THUD, 0.5 + sc * 0.3);
+                            self.boulders[k].2 = sc; // knocked, but immovable
+                            hit = true;
+                            break;
+                        }
+                    }
+                    if !hit {
+                        for k in 0..LILIES {
+                            let (lx, ly, _) = self.lilies[k];
+                            if fabs(x - lx) + fabs(y - ly) < u * 0.07 {
+                                self.lilies[k].2 += 0.35; // sets it bobbing
+                                self.ripple(lx, ly);
+                                sfx(audio::PLIP, 0.35);
+                                hit = true;
+                                break;
+                            }
+                        }
+                    }
+                    if !hit {
+                        if self.depth(w, h, x, y) > 0.0 {
+                            self.ripple(x, y);
+                            self.busy = 0.5;
+                            sfx(audio::PLIP, 0.6);
+                        } else {
+                            sfx(audio::THUD, 0.25);
+                        }
+                    }
                 }
                 self.px = x;
                 self.py = y;
@@ -747,77 +803,121 @@ impl Game for Pond {
         }
 
         // ------------------------------------------------- the mossy stone rim
-        // Stones first, then moss over the top of them, which is the order they
-        // ended up in.
-        fb.fill_ellipse(rcx as i32, rcy as i32, (rrx + u * 0.03) as i32,
-                        (rry + u * 0.03) as i32, RIM_DARK);
-        fb.fill_ellipse(rcx as i32, rcy as i32, rrx as i32, rry as i32, RIM);
-        for k in 0..34 {
-            let a = k as f32 / 34.0;
-            let sx = rcx + wave(a) * rrx * 0.99;
-            let sy = rcy + wave(a + 0.25) * rry * 0.99;
-            let sr = (u * (0.020 + (k % 3) as f32 * 0.006)) as i32;
-            fb.rock(sx as i32, sy as i32, sr, 0x51A3_7C0D ^ (k as u32 * 2654435761), RIM_LIGHT);
-            // moss tufts, sitting on the stones
-            if k % 2 == 0 {
-                let c = if k % 4 == 0 { MOSS } else { MOSS_DARK };
-                fb.rock(sx as i32, sy as i32 - sr / 2, (sr as f32 * 0.8) as i32,
-                        0x2C7B_91E5 ^ (k as u32 * 40503), c);
-                fb.rect(sx as i32 - sr / 3, sy as i32 - sr, 3, sr, MOSS_LIGHT);
+        // The rim IS boulders. Drawn dense and overlapping so they merge into a
+        // bank, rather than a grey band with a few pebbles sitting on it.
+        fb.fill_ellipse(rcx as i32, rcy as i32, (rrx + u * 0.05) as i32,
+                        (rry + u * 0.05) as i32, RIM_DARK);
+        for k in 0..RIM_STONES {
+            let t = k as f32 / RIM_STONES as f32;
+            let hh = hash(k as u32 * 7 + 11);
+            let jitter = 0.97 + ((hh & 63) as f32 / 63.0) * 0.09;
+            let sx = rcx + rrx * jitter * wave_q(t);
+            let sy = rcy + rry * jitter * wave(t);
+            let sr = u * (0.036 + ((hh >> 6) & 31) as f32 / 31.0 * 0.030);
+            // a shadow under it, the stone, then a lit cap on top
+            fb.rock(sx as i32, sy as i32 + (sr * 0.3) as i32, sr as i32, hh, RIM_DARK);
+            fb.rock(sx as i32, sy as i32, sr as i32, hh, RIM);
+            fb.rock(sx as i32 - (sr * 0.15) as i32, sy as i32 - (sr * 0.28) as i32,
+                    (sr * 0.66) as i32, hh ^ 0x9E37, RIM_LIGHT);
+            // moss, always on the upper side
+            if hh % 5 != 0 {
+                let mc = if hh % 2 == 0 { MOSS } else { MOSS_DARK };
+                fb.rock(sx as i32 + (sr * 0.1) as i32, sy as i32 - (sr * 0.45) as i32,
+                        (sr * 0.70) as i32, hh ^ 0x51AB, mc);
+                fb.rock(sx as i32 - (sr * 0.35) as i32, sy as i32 - (sr * 0.55) as i32,
+                        (sr * 0.42) as i32, hh ^ 0x22C7, MOSS_LIGHT);
+                // blades sprouting out of it
+                for blade in 0..3 {
+                    let bx2 = sx + (blade as f32 - 1.0) * sr * 0.45;
+                    let bh2 = sr * (0.45 + ((hh >> blade) & 7) as f32 / 7.0 * 0.5);
+                    fb.rect(bx2 as i32, (sy - sr * 0.5 - bh2) as i32, 3, bh2 as i32, MOSS_LIGHT);
+                }
             }
         }
 
         // ------------------------------------------------------------- water
-        // Bands from the rim inward, so it deepens toward the middle.
-        let bands = 16;
+        // Lit from the near side: the far edge sits in the shadow of the bank,
+        // the water in front of him is brighter. A symmetric radial fade reads
+        // as a painted target; this reads as a pool with light on it.
+        let lit_y = cy + ry * 0.22;
+        let bands = 20;
         for b in 0..bands {
             let k = b as f32 / bands as f32;
             let wob = wave(self.t * 0.16 + k * 1.7) * u * 0.004;
-            let t255 = (k * 255.0) as u32;
-            let c = if k < 0.4 {
-                let q = (k / 0.4 * 255.0) as u32;
-                (crate::engine::lerp(SHALLOW.0, MID.0, q),
-                 crate::engine::lerp(SHALLOW.1, MID.1, q),
-                 crate::engine::lerp(SHALLOW.2, MID.2, q))
+            let q = (k * 255.0) as u32;
+            let c = if k < 0.45 {
+                let qq = (k / 0.45 * 255.0) as u32;
+                (crate::engine::lerp(DEEP.0, MID.0, qq),
+                 crate::engine::lerp(DEEP.1, MID.1, qq),
+                 crate::engine::lerp(DEEP.2, MID.2, qq))
             } else {
-                let q = ((k - 0.4) / 0.6 * 255.0) as u32;
-                (crate::engine::lerp(MID.0, DEEP.0, q),
-                 crate::engine::lerp(MID.1, DEEP.1, q),
-                 crate::engine::lerp(MID.2, DEEP.2, q))
+                let qq = ((k - 0.45) / 0.55 * 255.0) as u32;
+                (crate::engine::lerp(MID.0, SHALLOW.0, qq),
+                 crate::engine::lerp(MID.1, SHALLOW.1, qq),
+                 crate::engine::lerp(MID.2, SHALLOW.2, qq))
             };
-            let _ = t255;
-            let er = rx * (1.0 - k) + wob;
-            let ey = ry * (1.0 - k) + wob;
+            let _ = q;
+            let er = rx * (1.0 - k * 0.92) + wob;
+            let ey = ry * (1.0 - k * 0.92) + wob;
+            // each band creeps toward the lit point, so the gradient leans
+            let bx = cx + (cx - cx) * k;
+            let by = cy + (lit_y - cy) * k;
             if er > 1.0 && ey > 1.0 {
-                fb.fill_ellipse(cx as i32, cy as i32, er as i32, ey as i32, c);
+                fb.fill_ellipse(bx as i32, by as i32, er as i32, ey as i32, c);
             }
         }
 
-        // Standing ripples: fine concentric lines that breathe. The pool is
-        // never still, even before he has thrown anything into it.
-        for k in 0..7 {
-            let a = k as f32 / 7.0;
-            let breathe = 0.30 + a * 0.66 + wave(self.t * 0.13 + a * 0.8) * 0.02;
-            let ox = wave(self.t * 0.07 + a) * u * 0.02;
-            let oy = wave(self.t * 0.05 + a + 0.3) * u * 0.015;
-            ellipse(fb, (cx + ox) as i32, (cy + oy) as i32,
-                    (rx * breathe) as i32, (ry * breathe) as i32, 1, CAUSTIC);
+        // The standing swell: many broken arcs at scattered radii, drifting.
+        // This is what the water actually looks like, and one tidy set of
+        // concentric circles is what it does not.
+        for k in 0..26 {
+            let hh = hash(k as u32 * 13 + 3);
+            let base = 0.16 + ((hh & 255) as f32 / 255.0) * 0.86;
+            let drift = wave(self.t * 0.05 + k as f32 * 0.11) * 0.03;
+            let ox = wave(self.t * 0.04 + k as f32 * 0.21) * u * 0.035;
+            let oy = wave(self.t * 0.03 + k as f32 * 0.17) * u * 0.025;
+            let r = base + drift;
+            if r <= 0.03 {
+                continue;
+            }
+            let shade = if hh % 5 == 0 { GLINT } else { CAUSTIC };
+            arc_dashes(fb, cx + ox, cy + oy, rx * r, ry * r,
+                       hh, if hh % 7 == 0 { 2 } else { 1 }, shade);
         }
-        for k in 0..11 {
-            let a = k as f32 * 0.09;
-            let gx = cx + wave(self.t * 0.09 + a) * rx * 0.7;
-            let gy = cy + wave(self.t * 0.07 + a + 0.4) * ry * 0.7;
-            fb.rect(gx as i32, gy as i32, (u * 0.03) as i32, 2, GLINT);
+
+        // flecks of foam, gathered toward the near edge
+        for k in 0..26 {
+            let hh = hash(k as u32 * 29 + 101);
+            let t = (hh & 1023) as f32 / 1023.0;
+            let rr = 0.80 + ((hh >> 10) & 63) as f32 / 63.0 * 0.18;
+            let fx = cx + rx * rr * wave_q(t);
+            let fy = cy + ry * rr * wave(t);
+            if fy > cy {
+                fb.rect(fx as i32, fy as i32, 3 + (hh % 3) as i32, 2, FOAM);
+            }
         }
 
         // ------------------------------------------------ stones in the water
         for k in 0..BOULDERS {
             let (bx, by, sc) = self.boulders[k];
-            let br = (u * 0.045 * sc) as i32;
-            fb.rock(bx as i32, by as i32 + br / 3, br, 0x77C1_2A5B ^ (k as u32 * 22695477), SHADOW);
-            fb.rock(bx as i32, by as i32, br, 0x77C1_2A5B ^ (k as u32 * 22695477), STONE);
-            fb.rock(bx as i32 - br / 4, by as i32 - br / 4, br / 2,
-                    0x11D3_4E77 ^ (k as u32 * 69069), STONE_LIGHT);
+            let hh = hash(k as u32 * 17 + 5);
+            let br = (u * 0.058 * sc) as i32;
+            if br < 3 {
+                continue;
+            }
+            // A stone in water is three things: the part under the surface, the
+            // ring where it breaks through, and the lit part above. Draw only
+            // the last and it looks pasted on top of the pond.
+            fb.fill_ellipse(bx as i32, by as i32 + br / 3, (br as f32 * 1.15) as i32,
+                            br / 2, DEEP);
+            arc_dashes(fb, bx, by + br as f32 * 0.30, br as f32 * 1.25,
+                       br as f32 * 0.55, hh, 1, CAUSTIC);
+            fb.rock(bx as i32, by as i32, br, hh, STONE_DARK);
+            fb.rock(bx as i32, by as i32 - br / 6, br, hh, STONE);
+            fb.rock(bx as i32 - br / 5, by as i32 - br / 3, (br as f32 * 0.62) as i32,
+                    hh ^ 0x4C1D, STONE_LIGHT);
+            // a little foam where it meets the water
+            fb.rect(bx as i32 - br / 2, by as i32 + br / 4, br / 3, 2, FOAM);
         }
 
         // ------------------------------------------------------ sunk pebbles
@@ -885,66 +985,144 @@ impl Game for Pond {
         }
 
         // --------------------------------------------------------- the living
+        // Drawn large, and built out of the parts that make each one
+        // recognisable: a frog is eyes and haunches, a turtle is a patterned
+        // shell with a head and four feet, a snail is a spiral. He should be
+        // able to name them without being told.
         for k in 0..CRITTERS {
             let (x, y) = (self.cx[k] as i32, self.cy[k] as i32);
-            let hidden = self.ctimer[k] > 0.0;
+            let busy = self.ctimer[k] > 0.0;
             match self.ckind[k] {
                 Critter::Frog => {
-                    let r = (u * 0.026) as i32;
-                    // mid-hop it is off the water, so it gets a shadow
-                    let hop = if hidden { wave(self.ctimer[k] * 0.9) * u * 0.05 } else { 0.0 };
+                    let r = (u * 0.055) as i32;
+                    let hop = if busy { wave(self.ctimer[k] * 0.9) * u * 0.06 } else { 0.0 };
                     if hop > 0.5 {
-                        fb.disc(x, y, r, SHADOW);
+                        fb.fill_ellipse(x, y, r, r / 2, SHADOW);
                     }
                     let fy = y - hop as i32;
-                    fb.disc(x, fy, r, FROG);
-                    fb.disc(x - r / 2, fy - r / 2, r / 2, FROG_DARK);
-                    fb.disc(x + r / 2, fy - r / 2, r / 2, FROG_DARK);
-                    fb.disc(x - r / 2, fy - r / 2, r / 3, FROG_EYE);
-                    fb.disc(x + r / 2, fy - r / 2, r / 3, FROG_EYE);
-                    fb.rect(x - r / 3, fy + r / 3, r * 2 / 3, 2, FROG_DARK);
+                    // haunches, then the body over them
+                    fb.fill_ellipse(x - r * 3 / 4, fy + r / 3, r / 2, r / 3, FROG_DARK);
+                    fb.fill_ellipse(x + r * 3 / 4, fy + r / 3, r / 2, r / 3, FROG_DARK);
+                    fb.fill_ellipse(x, fy, r, r * 3 / 4, FROG);
+                    // front feet
+                    fb.fill_ellipse(x - r / 2, fy + r * 2 / 3, r / 3, r / 5, FROG_DARK);
+                    fb.fill_ellipse(x + r / 2, fy + r * 2 / 3, r / 3, r / 5, FROG_DARK);
+                    // the eyes sit proud of the head, which is the whole tell
+                    for side in [-1, 1] {
+                        let ex = x + side * r / 2;
+                        let ey = fy - r / 2;
+                        fb.disc(ex, ey, r / 3, FROG);
+                        fb.disc(ex, ey, r / 4, FROG_EYE);
+                        fb.disc(ex, ey, r / 8 + 1, SHADOW);
+                    }
+                    // a wide mouth
+                    fb.rect(x - r / 2, fy + r / 5, r, 2, FROG_DARK);
                 }
                 Critter::Dragonfly => {
-                    let r = (u * 0.012) as i32;
+                    let r = (u * 0.014) as i32 + 1;
                     let beat = wave(self.cphase[k] * 14.0);
-                    let ww = (u * 0.030 * (0.55 + 0.45 * fabs(beat))) as i32;
-                    fb.rect(x - ww, y - 2, ww * 2, 2, WING);
-                    fb.rect(x - ww / 2, y + 1, ww, 2, WING);
-                    fb.disc(x, y, r, DFLY);
-                    fb.rect(x, y, (u * 0.030) as i32, 2, DFLY);
+                    let ww = (u * 0.055 * (0.5 + 0.5 * fabs(beat))) as i32;
+                    // four wings, in two pairs
+                    fb.fill_ellipse(x - ww / 2, y - 3, ww / 2, 3, WING);
+                    fb.fill_ellipse(x + ww / 2, y - 3, ww / 2, 3, WING);
+                    fb.fill_ellipse(x - ww / 3, y + 3, ww / 3, 2, WING);
+                    fb.fill_ellipse(x + ww / 3, y + 3, ww / 3, 2, WING);
+                    // a segmented body and a big head
+                    fb.rect(x, y - 1, (u * 0.055) as i32, 3, DFLY);
+                    fb.rect(x + (u * 0.020) as i32, y - 1, 3, 3, WING);
+                    fb.rect(x + (u * 0.038) as i32, y - 1, 3, 3, WING);
+                    fb.disc(x, y, r + 1, DFLY);
+                    fb.disc(x - 2, y - 1, 2, FROG_EYE);
                 }
                 Critter::Tadpole => {
-                    let r = (u * 0.009) as i32 + 1;
-                    let wig = wave(self.cphase[k] * 3.0) * u * 0.012;
+                    let r = (u * 0.018) as i32;
+                    let wig = wave(self.cphase[k] * 3.0) * u * 0.014;
+                    // a comma: round head, tapering tail
+                    for seg in 0..4 {
+                        let t = seg as f32 / 4.0;
+                        fb.disc(
+                            x - (u * 0.014 * (seg as f32 + 1.0)) as i32,
+                            y + (wig * t) as i32,
+                            ((r as f32) * (0.7 - t * 0.55)) as i32 + 1,
+                            TADPOLE
+                        );
+                    }
                     fb.disc(x, y, r, TADPOLE);
-                    fb.rect(x - (u * 0.018) as i32, y + wig as i32, (u * 0.018) as i32, 2, TADPOLE);
+                    fb.disc(x + r / 3, y - r / 3, r / 4, FROG_EYE);
                 }
                 Critter::Turtle => {
-                    let r = (u * 0.028) as i32;
-                    let out = if hidden { 0 } else { r / 2 };
-                    fb.disc(x, y, r, TURTLE_SHELL);
-                    fb.disc(x - r / 3, y - r / 3, r / 2, TURTLE_SHELL_HI);
+                    let r = (u * 0.055) as i32;
+                    let out = if busy { 0 } else { r / 2 };
+                    // four feet
+                    for (sx2, sy2) in [(-1, -1), (1, -1), (-1, 1), (1, 1)] {
+                        fb.fill_ellipse(
+                            x + sx2 * r * 3 / 4,
+                            y + sy2 * r / 2,
+                            r / 3 + out / 3,
+                            r / 4,
+                            TURTLE
+                        );
+                    }
                     if out > 0 {
-                        fb.disc(x + r, y, r / 2, TURTLE);          // head
-                        fb.rect(x - r, y + r / 2, r / 2, r / 3, TURTLE);
-                        fb.rect(x + r / 2, y + r / 2, r / 2, r / 3, TURTLE);
+                        fb.fill_ellipse(x + r, y, r / 2, r / 3, TURTLE);   // head
+                        fb.disc(x + r + r / 4, y - 2, 2, SHADOW);           // eye
+                        fb.rect(x - r - r / 2, y, r / 2, 3, TURTLE);        // tail
+                    }
+                    // the shell, with plates on it
+                    fb.fill_ellipse(x, y, r, r * 3 / 4, TURTLE_SHELL);
+                    fb.fill_ellipse(x, y, r * 3 / 4, r / 2, TURTLE_SHELL_HI);
+                    for p in 0..5 {
+                        let d = DIRS8[p * 2 % 8];
+                        fb.rock(
+                            x + (d.0 * r as f32 * 0.45) as i32,
+                            y + (d.1 * r as f32 * 0.32) as i32,
+                            r / 5,
+                            0x5AB1_0C33 ^ (p as u32 * 2654435761),
+                            TURTLE_SHELL
+                        );
                     }
                 }
                 Critter::Newt => {
-                    let r = (u * 0.011) as i32 + 1;
-                    let wig = wave(self.cphase[k] * 2.2) * u * 0.008;
-                    fb.disc(x, y, r, NEWT);
-                    fb.rect(x - (u * 0.026) as i32, y + wig as i32, (u * 0.026) as i32, 3, NEWT);
-                    fb.rect(x - r, y - r, 2, 2, NEWT_SPOT);
+                    let r = (u * 0.020) as i32;
+                    let wig = wave(self.cphase[k] * 2.2) * u * 0.010;
+                    // tail, body, head, and four little legs
+                    for seg in 0..4 {
+                        let t = seg as f32 / 4.0;
+                        fb.fill_ellipse(
+                            x - (u * 0.016 * (seg as f32 + 1.0)) as i32,
+                            y + (wig * t) as i32,
+                            ((r as f32) * (0.8 - t * 0.6)) as i32 + 1,
+                            r / 3,
+                            NEWT
+                        );
+                    }
+                    for (sx2, sy2) in [(-1, -1), (0, -1), (-1, 1), (0, 1)] {
+                        fb.rect(x + sx2 * r, y + sy2 * r / 2, r / 2, 3, NEWT);
+                    }
+                    fb.fill_ellipse(x, y, r, r * 2 / 3, NEWT);
+                    fb.disc(x + r / 2, y - r / 3, 2, SHADOW);
+                    for spot in 0..3 {
+                        fb.rect(x - spot * r / 2, y - r / 4, 3, 3, NEWT_SPOT);
+                    }
                 }
                 Critter::Snail => {
-                    let r = (u * 0.013) as i32 + 1;
-                    fb.rect(x - r, y + r / 2, r * 2, 3, SNAIL);
+                    let r = (u * 0.028) as i32;
+                    // foot
+                    fb.fill_ellipse(x, y + r / 2, r, r / 3, SNAIL);
+                    // a spiral shell: rings, each a little smaller and offset
                     fb.disc(x, y, r, SNAIL_SHELL);
-                    fb.disc(x, y, r / 2, SNAIL);
-                    if !hidden {
-                        fb.rect(x + r, y - r, 2, r, SNAIL);        // eye stalks
-                        fb.rect(x + r + 3, y - r, 2, r, SNAIL);
+                    let mut rr = r;
+                    let mut ox = 0;
+                    while rr > 2 {
+                        fb.disc(x + ox, y, rr, if rr % 4 < 2 { SNAIL_SHELL } else { SNAIL });
+                        rr -= r / 4 + 1;
+                        ox += r / 6;
+                    }
+                    if !busy {
+                        fb.rect(x + r, y + r / 3, r / 2, 3, SNAIL);          // head
+                        fb.rect(x + r + r / 3, y - r / 2, 2, r / 2 + 3, SNAIL);
+                        fb.rect(x + r + r / 2 + 2, y - r / 3, 2, r / 3 + 3, SNAIL);
+                        fb.disc(x + r + r / 3, y - r / 2, 2, SHADOW);
                     }
                 }
             }
@@ -966,7 +1144,13 @@ impl Game for Pond {
             }
             let r = self.rock_r(w, h, i);
             let (body, light) = PEBBLES[self.kind[i] as usize % PEBBLES.len()];
-            fb.rock(self.x[i] as i32, self.y[i] as i32 + 2, r as i32, self.shape[i], SHADOW);
+            // A pale outline, so what can be picked up announces itself against
+            // stones that cannot. It breathes very slightly, which is enough to
+            // catch an eye without ever being loud.
+            let pulse = 1.0 + wave(self.t * 0.35 + i as f32 * 0.2) * 0.05;
+            fb.rock(self.x[i] as i32, self.y[i] as i32 + 3, r as i32, self.shape[i], SHADOW);
+            fb.rock(self.x[i] as i32, self.y[i] as i32, (r * pulse) as i32 + 2,
+                    self.shape[i], PICKABLE);
             fb.rock(self.x[i] as i32, self.y[i] as i32, r as i32, self.shape[i], body);
             fb.rect(self.x[i] as i32 - (r * 0.25) as i32, self.y[i] as i32 - (r * 0.45) as i32,
                     (r * 0.5) as i32, (r * 0.3) as i32, light);

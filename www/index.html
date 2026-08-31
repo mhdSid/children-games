@@ -43,8 +43,9 @@
   </svg>
 </button>
 
-<div id="hold" aria-hidden="true"></div>
-<div id="ring"></div>
+<button class="menu-btn" id="menu" type="button" aria-label="Menu">
+  <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
+</button>
 
 <div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-label="Choose a game">
   <div class="sheet-inner">
@@ -52,7 +53,6 @@
     <div id="picks"></div>
     <p class="diag" id="diag"></p>
     <div class="minor">
-      <button type="button" id="test">Test sound</button>
       <button type="button" id="fresh">Start a fresh world</button>
       <button type="button" id="mute">Sound on</button>
       <button type="button" id="full" hidden>Full screen</button>
