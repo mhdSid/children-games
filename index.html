@@ -178,31 +178,32 @@ body {
 
 #turn {
   position: fixed;
-  right: calc(env(safe-area-inset-right) + 18px);
-  bottom: calc(env(safe-area-inset-bottom) + 18px);
-  width: 74px;
-  height: 74px;
+  right: calc(env(safe-area-inset-right) + 16px);
+  bottom: calc(env(safe-area-inset-bottom) + 16px);
+  width: 46px;
+  height: 46px;
   display: grid;
   place-items: center;
+  padding: 0;
   border-radius: 50%;
-  border: 2px solid rgba(201, 154, 46, .55);
-  background: rgba(27, 36, 44, .58);
-  backdrop-filter: blur(6px);
-  color: var(--brass);
+  border: 1px solid rgba(201, 154, 46, .30);
+  background: rgba(18, 24, 30, .34);
+  backdrop-filter: blur(4px);
+  color: rgba(201, 154, 46, .82);
   cursor: pointer;
   touch-action: manipulation;
   z-index: 4;
 }
 #turn[hidden] { display: none; }
-#turn svg { width: 40px; height: 40px; fill: none; stroke: currentColor;
-            stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round;
+#turn svg { width: 22px; height: 22px; fill: none; stroke: currentColor;
+            stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
             transition: transform .42s cubic-bezier(.34,1.3,.5,1); }
 #turn.spun svg { transform: rotate(180deg); }
-#turn:active { background: var(--brass-dim); }
+#turn:active { background: var(--brass-dim); color: var(--brass); }
 
 @media (orientation: landscape) and (max-height: 520px) {
-  #turn { width: 62px; height: 62px; bottom: 12px; right: 12px; }
-  #turn svg { width: 34px; height: 34px; }
+  #turn { width: 42px; height: 42px; bottom: 10px; right: 10px; }
+  #turn svg { width: 20px; height: 20px; }
 }
 
 /* ------------------------------------------------------------- corner hold
@@ -418,6 +419,7 @@ const Sound = (() => {
   let ac = null, master = null, noiseBuf = null;
   let eng = null, engGain = null, engFilt = null;
   let hyd = null, hydGain = null;
+  let mill = null, millGain = null, millFilt = null;
   let silent = null;
 
   // iPhones and iPads mute Web Audio outright when the ringer switch is set to
@@ -446,9 +448,11 @@ const Sound = (() => {
   function teardown() {
     try { if (eng) eng.stop(); } catch {}
     try { if (hyd) hyd.stop(); } catch {}
+    try { if (mill) mill.stop(); } catch {}
     try { if (ac) ac.close(); } catch {}
     ac = master = noiseBuf = null;
     eng = engGain = engFilt = hyd = hydGain = null;
+    mill = millGain = millFilt = null;
     lastClock = -1; stalls = 0;
   }
 
@@ -507,6 +511,21 @@ const Sound = (() => {
     hydFilt.Q.value = 3;
     hyd.connect(hydFilt); hydFilt.connect(hydGain); hydGain.connect(master);
     hyd.start();
+
+    // The crusher's rumble is held too, so it lasts exactly as long as the
+    // machine is working. Filtered noise rather than a tone — a mill grinding
+    // is not a note.
+    mill = ac.createBufferSource();
+    mill.buffer = noiseBuf;
+    mill.loop = true;
+    millFilt = ac.createBiquadFilter();
+    millFilt.type = "lowpass";
+    millFilt.frequency.value = 220;
+    millFilt.Q.value = 4;
+    millGain = ac.createGain();
+    millGain.gain.value = 0;
+    mill.connect(millFilt); millFilt.connect(millGain); millGain.connect(master);
+    mill.start();
     return ac;
   }
 
@@ -570,6 +589,21 @@ const Sound = (() => {
         }
         break;
       }
+      case 12:                                                           // a rock goes into the jaws
+        thud(0.26, 900 + p * 700, 0.42 + p * 0.30);
+        tone("sawtooth", 150 - p * 30, 60, 0.22, 0.14);
+        break;
+      case 13: {                                                         // the mill, while it works
+        if (!millGain) break;
+        const t = ac.currentTime;
+        millGain.gain.setTargetAtTime(p > 0.02 ? 0.020 + p * 0.055 : 0, t, 0.10);
+        millFilt.frequency.setTargetAtTime(180 + p * 520, t, 0.12);
+        break;
+      }
+      case 14:                                                           // a gem
+        [0, 90, 190].forEach((d, i) =>
+          setTimeout(() => tone("sine", [784, 1047, 1319][i], [784, 1047, 1319][i], 0.26, 0.13), d));
+        break;
       case 10:                                                           // stone set into the wall
         thud(0.12, 1500, 0.28);
         tone("triangle", 300 + p * 55, 260 + p * 55, 0.16, 0.13);
