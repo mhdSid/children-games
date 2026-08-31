@@ -25,6 +25,13 @@ pub const DONE: u32 = 11; // the wall is finished
 pub const CRUNCH: u32 = 12; // a rock went into the crusher
 pub const MILL: u32 = 13; // continuous; how hard the crusher is working
 pub const GEM: u32 = 14; // a gem came out of the chute
+pub const PLOP: u32 = 15; // a rock hit the water; param is how big
+pub const THUD: u32 = 16; // a rock landed on the bank
+pub const LAP: u32 = 17; // continuous; how busy the water is
+pub const CROAK: u32 = 18; // a frog
+pub const BUZZ: u32 = 19; // a dragonfly leaving in a hurry
+pub const PLIP: u32 = 20; // something small breaking the surface
+pub const CHIRP: u32 = 21; // a bird, or a cricket, somewhere off in the trees
 
 /// Fire a sound. Safe wrapper so nothing else in the tree needs `unsafe`.
 pub fn sfx(id: u32, param: f32) {

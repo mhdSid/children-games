@@ -5,6 +5,7 @@
 //! is what lets several games share one module and switch with no fetch.
 
 pub mod dumptruck;
+pub mod pond;
 pub mod snake;
 
 use crate::engine::{Frame, Rng};
@@ -60,15 +61,18 @@ pub trait Game {
 
 static mut SNAKE: snake::Snake = snake::Snake::new();
 static mut DUMPTRUCK: dumptruck::DumpTruck = dumptruck::DumpTruck::new();
+static mut POND: pond::Pond = pond::Pond::new();
 
-pub const COUNT: u32 = 2;
+pub const COUNT: u32 = 3;
 
 pub const DUMPTRUCK_ID: u32 = 1;
+pub const POND_ID: u32 = 2;
 
 pub fn get(id: u32) -> &'static mut dyn Game {
     unsafe {
         match id {
             DUMPTRUCK_ID => &mut *core::ptr::addr_of_mut!(DUMPTRUCK) as &mut dyn Game,
+            POND_ID => &mut *core::ptr::addr_of_mut!(POND) as &mut dyn Game,
             _ => &mut *core::ptr::addr_of_mut!(SNAKE) as &mut dyn Game,
         }
     }

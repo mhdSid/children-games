@@ -37,21 +37,34 @@ export const GAMES = [
     keys: true,
     pad: false,
     readout: true,
-    score: "Score", best: "Best",
+    score: "Score",
+    best: "Best",
     hint: (state, score) =>
       state === 0 ? "Swipe or tap a direction to start"
         : state === 1 ? ""
-          :               "Game over — " + score + (score === 1 ? " apple" : " apples")
+          : "Game over — " + score + (score === 1 ? " apple" : " apples")
   },
   {
     title: "Dump Truck",
     keys: false,
     pad: false,
     readout: false,
-    score: "Loaded", best: "Most",
+    score: "Loaded",
+    best: "Most",
     hint: (_state, score) =>
       score === 0 ? "Drag the rocks into the truck"
         : "Tap the truck to tip them out"
+  },
+  {
+    title: "Pond",
+    keys: false,
+    pad: false,
+    readout: false,
+    score: "Thrown",
+    best: "Splashes",
+    hint: (_state, score) =>
+      score === 0 ? "Pick up a stone and throw it in"
+        : ""
   }
 ]
 

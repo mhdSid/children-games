@@ -10,6 +10,7 @@ const Sound = (() => {
   let eng = null, engGain = null, engFilt = null
   let hyd = null, hydGain = null
   let mill = null, millGain = null, millFilt = null
+  let lap = null, lapGain = null, lapFilt = null
   let silent = null
 
   // iPhones and iPads mute Web Audio outright when the ringer switch is set to
@@ -39,10 +40,12 @@ const Sound = (() => {
     try { if (eng) eng.stop() } catch {}
     try { if (hyd) hyd.stop() } catch {}
     try { if (mill) mill.stop() } catch {}
+    try { if (lap) lap.stop() } catch {}
     try { if (ac) ac.close() } catch {}
     ac = master = noiseBuf = null
     eng = engGain = engFilt = hyd = hydGain = null
     mill = millGain = millFilt = null
+    lap = lapGain = lapFilt = null
     lastClock = -1; stalls = 0
   }
 
@@ -116,6 +119,20 @@ const Sound = (() => {
     millGain.gain.value = 0
     mill.connect(millFilt); millFilt.connect(millGain); millGain.connect(master)
     mill.start()
+
+    // The pond's own voice: always there under everything, rising when the
+    // water has been disturbed.
+    lap = ac.createBufferSource()
+    lap.buffer = noiseBuf
+    lap.loop = true
+    lapFilt = ac.createBiquadFilter()
+    lapFilt.type = "bandpass"
+    lapFilt.frequency.value = 420
+    lapFilt.Q.value = 0.8
+    lapGain = ac.createGain()
+    lapGain.gain.value = 0
+    lap.connect(lapFilt); lapFilt.connect(lapGain); lapGain.connect(master)
+    lap.start()
     return ac
   }
 
@@ -176,6 +193,57 @@ const Sound = (() => {
           revNext = ac.currentTime + 0.62
           tone("square", 1050, 1050, 0.16, 0.07)
         }
+        break
+      }
+      case 15: {                                                         // a stone hits the water
+        const big = 0.3 + p * 0.7
+        // the pitch drop is what makes it read as depth
+        tone("sine", 620 - p * 260, 90, 0.18 + p * 0.10, 0.16 * big)
+        thud(0.22 + p * 0.12, 520 + p * 900, 0.16 * big)
+        setTimeout(() => thud(0.30, 2600, 0.05 * big), 60)   // the spray after
+        break
+      }
+      case 16:                                                           // onto the bank
+        thud(0.16, 420 + p * 300, 0.30)
+        tone("sine", 150, 70, 0.12, 0.10)
+        break
+      case 17: {                                                         // the water, moving
+        if (!lapGain) break
+        const t = ac.currentTime
+        lapGain.gain.setTargetAtTime(p > 0.02 ? 0.010 + p * 0.030 : 0.004, t, 0.30)
+        lapFilt.frequency.setTargetAtTime(320 + p * 900, t, 0.30)
+        break
+      }
+      case 18: {                                                         // a frog
+        const base = 150 + p * 90
+        tone("square", base, base * 0.72, 0.11, 0.13)
+        setTimeout(() => tone("square", base * 1.25, base * 0.8, 0.15, 0.12), 120)
+        break
+      }
+      case 19: {                                                         // a dragonfly
+        const o = ac.createOscillator(), g = ac.createGain(), lfo = ac.createOscillator()
+        const lg = ac.createGain()
+        o.type = "sawtooth"
+        o.frequency.value = 210
+        lfo.type = "sine"
+        lfo.frequency.value = 48                        // the wing flutter
+        lg.gain.value = 60
+        lfo.connect(lg); lg.connect(o.frequency)
+        g.gain.setValueAtTime(0.0001, ac.currentTime)
+        g.gain.exponentialRampToValueAtTime(0.06, ac.currentTime + 0.02)
+        g.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime + 0.5)
+        o.connect(g); g.connect(master)
+        o.start(); lfo.start()
+        o.stop(ac.currentTime + 0.52); lfo.stop(ac.currentTime + 0.52)
+        break
+      }
+      case 20:                                                           // something small
+        tone("sine", 900 + p * 500, 500, 0.07, 0.07 + p * 0.05)
+        break
+      case 21: {                                                         // off in the trees
+        const n = [1568, 1760, 2093][Math.floor(p * 3) % 3]
+        tone("sine", n, n * 1.06, 0.09, 0.05)
+        setTimeout(() => tone("sine", n * 1.18, n * 1.1, 0.07, 0.04), 110)
         break
       }
       case 12:                                                           // a rock goes into the jaws

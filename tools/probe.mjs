@@ -6,7 +6,7 @@
 import fs from "fs"
 
 const sfx = []
-const CONTINUOUS = new Set([2, 5, 6, 13])      // TIP, ENGINE, REVERSE, MILL
+const CONTINUOUS = new Set([2, 5, 6, 13, 17])  // TIP, ENGINE, REVERSE, MILL, LAP
 const tipParams = []
 const imports = { env: { host_sfx: (id, p) => {
   if (id === 2) tipParams.push(p)
@@ -351,6 +351,48 @@ console.log("\n=== turning the truck around ===")
   w.select(0)
   ok(w.can_flip() === 0, "snake offers no turn button")
   ok(w.facing() === 0, "and reports no facing")
+}
+
+// ---------------------------------------------------------------------------
+console.log("\n=== the pond ===")
+{
+  w.init(7); w.select(2); w.resize(844, 480)
+  const { W, H } = px()
+  tick(20)
+  ok(w.game_count() === 3, "three games in the module")
+  ok(w.status() === 1, "the pond has no fail state")
+  ok(w.score() === 0, "nothing thrown yet")
+
+  const heard = () => [...new Set(sfx)]
+  const lob = (fx, fy, tx, ty, steps) => {
+    sfx.length = 0
+    w.pointer(fx, fy, DOWN); tick(2)
+    for (let i = 1; i <= steps; i++) {
+      w.pointer(fx + (tx - fx) * i / steps, fy + (ty - fy) * i / steps, MOVE); tick(2)
+    }
+    w.pointer(tx, ty, UP); tick(140)
+    return heard()
+  }
+
+  const first = lob(120, H - 60, W * 0.40, H * 0.60, 14)
+  ok(w.score() >= 1, "a stone can be picked up and thrown (" + w.score() + ")")
+  ok(first.includes(15), "a stone landing in the water makes a splash")
+  ok(first.some(id => [18, 19, 20].includes(id)),
+    "and something living reacts to it (" + first.join(",") + ")")
+
+  // the pool is never empty of stones to throw
+  for (let i = 0; i < 12; i++) lob(60 + i * 30, H - 50, W * 0.5, H * 0.55, 12)
+  tick(400)
+  ok(w.score() > 1, "he can keep throwing (" + w.score() + " so far)")
+
+  const p = px()
+  ok(p.d[(W * H - 1) * 4 + 3] === 255, "the frame is fully painted")
+  const uniq = new Set()
+  for (let i = 0; i < p.d.length; i += 4 * 997) uniq.add(p.d[i] + "," + p.d[i + 1] + "," + p.d[i + 2])
+  ok(uniq.size > 8, "it is a colourful scene (" + uniq.size + " colours sampled)")
+
+  w.select(0); w.turn(2); tick(20)
+  ok(w.status() === 1, "snake still runs after all that")
 }
 
 console.log(fails === 0 ? "\nALL PASS" : `\n${fails} FAILURES`)

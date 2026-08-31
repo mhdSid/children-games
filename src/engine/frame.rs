@@ -200,6 +200,36 @@ impl Frame {
         }
     }
 
+    /// Filled ellipse. A pond seen from above is one, and so is every band of
+    /// water inside it.
+    pub fn fill_ellipse(&mut self, cx: i32, cy: i32, rx: i32, ry: i32, c: Rgb) {
+        if rx < 1 || ry < 1 {
+            return;
+        }
+        for dy in -ry..=ry {
+            let y = cy + dy;
+            if y < 0 || y >= height() as i32 {
+                continue;
+            }
+            // In f32, not i32: rx*rx*ry*ry overflows a 32-bit integer at any
+            // pond-sized radius, and the comparison then returns nonsense —
+            // every row comes out full width and the ellipse draws as a slab.
+            let fy = dy as f32 / ry as f32;
+            let rem = 1.0 - fy * fy;
+            if rem <= 0.0 {
+                continue;
+            }
+            let mut dx = rx;
+            while dx > 0 && {
+                let fx = dx as f32 / rx as f32;
+                fx * fx > rem
+            } {
+                dx -= 1;
+            }
+            self.rect(cx - dx, y, dx * 2 + 1, 1, c);
+        }
+    }
+
     pub fn dim(&mut self, amount: u16) {
         let live = width() * height() * 4;
         let buf = self.buf();
@@ -299,6 +329,82 @@ pub fn fmax(a: f32, b: f32) -> f32 {
 #[inline]
 pub fn clamp(v: f32, lo: f32, hi: f32) -> f32 {
     fmin(fmax(v, lo), hi)
+}
+
+/// Fractional part, for anything that repeats.
+#[inline]
+pub fn frac(x: f32) -> f32 {
+    let t = x - (x as i32) as f32;
+    if t < 0.0 {
+        t + 1.0
+    } else {
+        t
+    }
+}
+
+/// One cycle of a wave over `t` in 0..1, peaking at +-1.
+///
+/// Two parabolic humps rather than a real sine: `core` has no trigonometry, a
+/// lookup table would be 256 hand-written literals, and at the amplitude water
+/// actually moves nobody can tell the difference.
+pub fn wave(t: f32) -> f32 {
+    let p = frac(t);
+    let (sign, u) = if p < 0.5 {
+        (1.0, p * 2.0)
+    } else {
+        (-1.0, (p - 0.5) * 2.0)
+    };
+    sign * 4.0 * u * (1.0 - u)
+}
+
+/// Ellipse outline, thickness `th`. Ripples on a pond seen at an angle are
+/// ellipses, and drawing one directly is far cheaper than scaling a circle.
+pub fn ellipse(fb: &mut Frame, cx: i32, cy: i32, rx: i32, ry: i32, th: i32, c: Rgb) {
+    if rx < 1 || ry < 1 {
+        return;
+    }
+    let inner_rx = rx - th;
+    let inner_ry = ry - th;
+    for dy in -ry..=ry {
+        let y = cy + dy;
+        if y < 0 || y >= height() as i32 {
+            continue;
+        }
+        // widest x on this row, walked in from the edge — in f32, because the
+        // integer form overflows at any pond-sized radius
+        let fy = dy as f32 / ry as f32;
+        let rem = 1.0 - fy * fy;
+        if rem <= 0.0 {
+            continue;
+        }
+        let mut dx = rx;
+        while dx > 0 && {
+            let fx = dx as f32 / rx as f32;
+            fx * fx > rem
+        } {
+            dx -= 1;
+        }
+        let mut ix = 0;
+        if inner_rx > 0 && inner_ry > 0 && dy.abs() < inner_ry {
+            let iy = dy as f32 / inner_ry as f32;
+            let irem = 1.0 - iy * iy;
+            if irem > 0.0 {
+                ix = inner_rx;
+                while ix > 0 && {
+                    let fx = ix as f32 / inner_rx as f32;
+                    fx * fx > irem
+                } {
+                    ix -= 1;
+                }
+            }
+        }
+        if ix > 0 {
+            fb.rect(cx - dx, y, dx - ix, 1, c);
+            fb.rect(cx + ix, y, dx - ix, 1, c);
+        } else {
+            fb.rect(cx - dx, y, dx * 2 + 1, 1, c);
+        }
+    }
 }
 
 /// Linear interpolation on colour channels, 0..=255.

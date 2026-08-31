@@ -105,6 +105,54 @@ That's the whole game: carry things somewhere, and the world remembers.
     ╰───────────────────────────────────────────────╯
 ```
 
+## 🐸 THE POND
+
+```
+        .-~-.           ~   ~   ~
+      (  o o  )       ~  .---.  ~
+       '--^--'       ~  ( ~~~ )  ~
+                      ~  '---'  ~
+     .-.    .-.        ~   ~   ~
+    (   )  (   )
+```
+
+A rock pool in the shade, seen from above. Pick up a coloured pebble from the
+rim and **throw it** — drag it and let go, and it flies the way your hand was
+moving. The faster the flick, the further it goes and the higher it arcs.
+
+Watch its shadow: the stone lifts off it on the way up and drops back onto it
+on the way down. That is how you can tell where it is going to land.
+
+**It lands in the water** — a splash, rings spreading out, and everything
+nearby reacts. **It lands on the stones** — a dull knock, and it sits there
+until you pick it up again.
+
+### 🦎 Who lives there
+
+Every one of them answers a touch, and every one of them has its own voice.
+
+| | |
+| :-- | :-- |
+| **Frogs** | sit on the lily pads and croak. Touch one — or splash near it — and it hops to another pad |
+| **Dragonflies** | hover over the water and bolt with a buzz |
+| **Turtles** | paddle about slowly and pull into their shells |
+| **Tadpoles** | wiggle in the shallows and scatter |
+| **Newts** | crawl around the stone rim |
+| **Snails** | do almost nothing, extremely slowly, which is the joke |
+| **Fish** | flash orange under the surface and dart from a splash |
+
+Stones that sink **stay on the bottom**, so the pool slowly fills with
+everything he has ever thrown. Fresh pebbles wash up on the rim, so he can
+never run out.
+
+---
+
+```
+    ╭───────────────────────────────────────────────╮
+    │  G A M E   3                                  │
+    ╰───────────────────────────────────────────────╯
+```
+
 ## 🐍 SNAKE
 
 ```
