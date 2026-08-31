@@ -22,6 +22,9 @@ pub const ROCK_HIT: u32 = 8; // rock landed on rock, not on ground; param impact
 pub const TURN: u32 = 9; // the truck is turning around
 pub const SET: u32 = 10; // a rock locked into the wall; param is which one
 pub const DONE: u32 = 11; // the wall is finished
+pub const CRUNCH: u32 = 12; // a rock went into the crusher
+pub const MILL: u32 = 13; // continuous; how hard the crusher is working
+pub const GEM: u32 = 14; // a gem came out of the chute
 
 /// Fire a sound. Safe wrapper so nothing else in the tree needs `unsafe`.
 pub fn sfx(id: u32, param: f32) {

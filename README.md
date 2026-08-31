@@ -57,6 +57,21 @@ if what he wants is on the other side, he turns the truck round first. The round
 arrow button in the bottom corner does it, and the truck swings through edge-on
 to face the other way.
 
+### 🏗️ Two places to take the rocks
+
+**The wall.** Past the quarry there are chalk outlines in the shape of a wall.
+Put a rock on one and it snaps in, gets a seam of mortar, and stays. Fill all
+seven and a flag goes up. He can pull stones back out whenever he likes.
+
+**The crusher.** Right at the end of the world. Drive all the way to the end and
+tip — the load falls into the funnel, the machine bites and shudders, and gravel
+travels out along a conveyor onto a heap that grows with everything he has ever
+put through it. Every fifth rock makes a gem, and the gems sit on top of the
+heap where he can count them.
+
+Nothing is ever used up. A crushed rock finds its way back to the quarry a few
+seconds later, so the world can never run out of things to carry.
+
 Rocks come in three sizes and four kinds now — granite, sandstone, basalt, and
 one that is **not a rock at all**. Big ones land harder, bounce less, and roll
 more slowly than little ones.

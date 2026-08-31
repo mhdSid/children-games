@@ -6,7 +6,7 @@
 import fs from "fs";
 
 const sfx = [];
-const CONTINUOUS = new Set([2, 5, 6]);          // TIP, ENGINE, REVERSE
+const CONTINUOUS = new Set([2, 5, 6, 13]);      // TIP, ENGINE, REVERSE, MILL
 const tipParams = [];
 const imports = { env: { host_sfx: (id, p) => {
   if (id === 2) tipParams.push(p);
@@ -200,15 +200,16 @@ for (const [RW, RH] of [[480, 1039], [844, 390], [480, 480]]) {
   ok(seen.length >= 3, "count steps down one at a time: " + seen.join(" -> "));
   ok(tipParams.some(p => p > 0.5) && tipParams.filter(p => p > 0).length > 20,
      "hydraulics are a held note, not a one-shot");
-  tick(300);
+  tick(120);
+  // The end of the world is the crusher now: driving to the end and tipping
+  // feeds it rather than leaving a pile on the ground.
+  const crunches = sfx.filter(x => x === 12).length;
+  ok(crunches >= 3, `tipping at the end of the world feeds the crusher (${crunches} crunches)`);
 
-  const dumped = rocksLoose();
-  ok(w.best() >= 4, "the tipped rocks landed on the ground (hauled " + w.best() + ")");
-  ok(dumped > 0, `there are rocks lying at the dump site (${dumped} px)`);
-
-  toEnd(0); tick(120);
-  toEnd(1); tick(160);
-  ok(rocksLoose() > 0, "the pile is still there after driving away and back");
+  // and nothing is used up: what goes in comes back out at the quarry
+  tick(400);
+  toEnd(0); tick(180);
+  ok(rocksLoose() > 0, "crushed rocks return to the quarry, so it never runs dry");
 
   // ---- B2: turning the tablet over must not destroy his world
   const hauledBefore = w.best();
