@@ -1,0 +1,304 @@
+/* ------------------------------------------------------------ viewport lock
+   Everything here exists to stop the page itself from moving while a small
+   finger drags across it: no scroll, no bounce, no pinch, no pull-to-refresh,
+   no text selection, no long-press callout. */
+
+:root {
+  --bg:        #12181e;
+  --line:      #202c35;
+  --ink:       #e6ede9;
+  --ink-soft:  #7d8f88;
+  --brass:     #c99a2e;
+  --brass-dim: rgba(201, 154, 46, .17);
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+  background: var(--bg);
+}
+
+body {
+  position: fixed;
+  inset: 0;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+  color: var(--ink);
+  font: 500 16px/1.4 ui-rounded, "SF Pro Rounded", system-ui, -apple-system,
+        "Segoe UI", Roboto, sans-serif;
+}
+
+/* ------------------------------------------------------------- the board
+   Edge to edge. The framebuffer is resized to the viewport's aspect, so
+   filling the box never stretches a pixel. */
+
+#board {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  background: var(--bg);
+  image-rendering: pixelated;
+  touch-action: none;
+}
+
+/* --------------------------------------------------------------- overlays
+   Nothing here is a permanent floating button. There is deliberately nothing
+   on screen for him to press by accident. */
+
+.readout {
+  position: fixed;
+  top: calc(env(safe-area-inset-top) + 10px);
+  right: calc(env(safe-area-inset-right) + 14px);
+  display: flex;
+  gap: 12px;
+  padding: 6px 12px;
+  border-radius: 9px;
+  background: rgba(13, 19, 24, .55);
+  backdrop-filter: blur(6px);
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity .2s;
+}
+.readout.on { opacity: 1; }
+.readout b { color: var(--brass); font-weight: 700; }
+.readout span { color: var(--ink-soft); }
+
+.hint {
+  position: fixed;
+  left: 50%;
+  /* clears the rock row along the bottom of the dump truck scene */
+  bottom: calc(env(safe-area-inset-bottom) + 112px);
+  transform: translateX(-50%);
+  max-width: 88%;
+  padding: 8px 16px;
+  border-radius: 9px;
+  background: rgba(13, 19, 24, .62);
+  backdrop-filter: blur(6px);
+  font-size: 14px;
+  pointer-events: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: bottom .15s;
+}
+.hint[hidden] { display: none; }
+.hint.above-pad { bottom: calc(env(safe-area-inset-bottom) + 148px); }
+
+.again {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  font: inherit;
+  font-size: 17px;
+  font-weight: 700;
+  color: #12181e;
+  background: var(--brass);
+  border: 0;
+  border-radius: 12px;
+  padding: 16px 30px;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.again[hidden] { display: none; }
+
+/* ----------------------------------------------------------------- gamepad */
+
+.pad {
+  position: fixed;
+  left: 50%;
+  bottom: calc(env(safe-area-inset-bottom) + 16px);
+  transform: translateX(-50%);
+  display: grid;
+  grid-template-columns: repeat(3, 62px);
+  grid-template-areas: ".  up ." "lf dn rt";
+  gap: 6px;
+}
+.pad[hidden] { display: none; }
+
+.pad button {
+  font: inherit;
+  font-size: 21px;
+  color: var(--ink);
+  background: rgba(27, 36, 44, .5);
+  backdrop-filter: blur(6px);
+  border: 1px solid rgba(120, 140, 150, .22);
+  border-radius: 13px;
+  height: 52px;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.pad button:active { background: var(--brass-dim); border-color: var(--brass); }
+.pad .up { grid-area: up; }
+.pad .left { grid-area: lf; }
+.pad .down { grid-area: dn; }
+.pad .right { grid-area: rt; }
+
+@media (orientation: landscape) and (max-height: 520px) {
+  .pad { grid-template-columns: repeat(3, 52px); bottom: 10px; }
+  .pad button { height: 42px; }
+  .hint.above-pad { bottom: 124px; }
+}
+
+/* --------------------------------------------------------- turn the truck
+   A floating control, unlike the game switcher — pressing it by accident just
+   turns the truck round, which is a thing he might want anyway. */
+
+#turn {
+  position: fixed;
+  right: calc(env(safe-area-inset-right) + 16px);
+  bottom: calc(env(safe-area-inset-bottom) + 16px);
+  width: 46px;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid rgba(201, 154, 46, .30);
+  background: rgba(18, 24, 30, .34);
+  backdrop-filter: blur(4px);
+  color: rgba(201, 154, 46, .82);
+  cursor: pointer;
+  touch-action: manipulation;
+  z-index: 4;
+}
+#turn[hidden] { display: none; }
+#turn svg { width: 22px; height: 22px; fill: none; stroke: currentcolor;
+            stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
+            transition: transform .42s cubic-bezier(.34,1.3,.5,1); }
+#turn.spun svg { transform: rotate(180deg); }
+#turn:active { background: var(--brass-dim); color: var(--brass); }
+
+@media (orientation: landscape) and (max-height: 520px) {
+  #turn { width: 42px; height: 42px; bottom: 10px; right: 10px; }
+  #turn svg { width: 20px; height: 20px; }
+}
+
+/* ------------------------------------------------------------- corner hold
+   The only way to change games. Invisible until it is being used, sized for
+   an adult thumb in the very corner, and it needs a steady hold — none of
+   which a two-year-old does by accident. */
+
+#hold {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 84px;
+  height: 84px;
+  touch-action: none;
+  z-index: 5;
+}
+
+#ring {
+  position: absolute;
+  top: calc(env(safe-area-inset-top) + 12px);
+  left: calc(env(safe-area-inset-left) + 12px);
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  opacity: 0;
+  transition: opacity .12s;
+  background:
+    conic-gradient(var(--brass) calc(var(--p, 0) * 1turn), rgba(255,255,255,.13) 0);
+  -webkit-mask: radial-gradient(circle, transparent 58%, #000 60%);
+          mask: radial-gradient(circle, transparent 58%, #000 60%);
+  pointer-events: none;
+}
+#ring.on { opacity: 1; }
+
+/* -------------------------------------------------------------- the switcher */
+
+.sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(9, 13, 17, .82);
+  backdrop-filter: blur(10px);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .16s;
+}
+.sheet.open { opacity: 1; pointer-events: auto; }
+
+.sheet-inner {
+  width: min(420px, 100%);
+  display: grid;
+  gap: 10px;
+}
+
+.sheet h2 {
+  margin: 0 0 4px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  text-align: center;
+}
+
+.sheet .pick {
+  font: inherit;
+  font-size: 19px;
+  font-weight: 700;
+  text-align: left;
+  color: var(--ink);
+  background: rgba(32, 44, 53, .55);
+  border: 1px solid var(--line);
+  border-radius: 15px;
+  padding: 20px 22px;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.sheet .pick[aria-pressed="true"] {
+  color: var(--brass);
+  background: var(--brass-dim);
+  border-color: rgba(201, 154, 46, .55);
+}
+
+.sheet .diag {
+  margin: 2px 0 0;
+  font: 400 11px/1.5 ui-monospace, "SF Mono", Menlo, monospace;
+  color: var(--ink-soft);
+  text-align: center;
+  white-space: pre-wrap;
+}
+
+.sheet .minor {
+  display: flex;
+  gap: 10px;
+  margin-top: 4px;
+}
+.sheet .minor button {
+  flex: 1;
+  font: inherit;
+  font-size: 14px;
+  color: var(--ink-soft);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 13px;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.sheet .minor button[hidden] { display: none; }
+
+:focus-visible { outline: 2px solid var(--brass); outline-offset: 2px; }
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; }
+}

@@ -1,0 +1,20 @@
+{
+  "name": "children-games",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "lint": "eslint www/js tools && stylelint www/style.css",
+    "lint:fix": "eslint --fix www/js tools && stylelint --fix www/style.css",
+    "test": "node tools/probe.mjs",
+    "build": "./build.sh",
+    "serve": "./serve.sh",
+    "deploy": "./deploy.sh"
+  },
+  "devDependencies": {
+    "@stylistic/eslint-plugin": "^2.11.0",
+    "eslint": "^9.16.0",
+    "stylelint": "^16.11.0",
+    "stylelint-config-standard": "^36.0.1"
+  },
+  "packageManager": "yarn@4.12.0"
+}
