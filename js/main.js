@@ -34,7 +34,8 @@ load(canvas).then((game) => {
       wasm.select(id)
       applyGame(wasm, id)
     },
-    onRestart: () => wasm.restart()
+    onRestart: () => wasm.restart(),
+    onLight: () => wasm.next_theme()
   })
   wireInput(canvas, game, {
     onMenu: (open) => (open ? openSheet() : closeSheet())
