@@ -20,6 +20,8 @@ pub const REVERSE: u32 = 6; // reversing beeper; param 1 on, 0 off
 pub const COUNT: u32 = 7; // the number changed; param is the new count
 pub const ROCK_HIT: u32 = 8; // rock landed on rock, not on ground; param impact
 pub const TURN: u32 = 9; // the truck is turning around
+pub const SET: u32 = 10; // a rock locked into the wall; param is which one
+pub const DONE: u32 = 11; // the wall is finished
 
 /// Fire a sound. Safe wrapper so nothing else in the tree needs `unsafe`.
 pub fn sfx(id: u32, param: f32) {

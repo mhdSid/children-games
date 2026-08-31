@@ -535,6 +535,15 @@ const Sound = (() => {
         }
         break;
       }
+      case 10:                                                           // stone set into the wall
+        thud(0.12, 1500, 0.28);
+        tone("triangle", 300 + p * 55, 260 + p * 55, 0.16, 0.13);
+        break;
+      case 11: {                                                         // the wall is finished
+        [0, 140, 280, 460].forEach((t, i) =>
+          setTimeout(() => tone("triangle", [523, 659, 784, 1047][i], [523, 659, 784, 1047][i], 0.30, 0.16), t));
+        break;
+      }
       case 9:                                                            // turning round
         tone("square", 300, 470, 0.16, 0.10);
         setTimeout(() => tone("square", 470, 300, 0.16, 0.08), 150);

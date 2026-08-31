@@ -15,8 +15,22 @@ use crate::engine::{clamp, fabs, height, lerp, sfx, width, Frame, Rgb, Rng, DOWN
 use crate::games::Game;
 
 const ROCKS: usize = 12;
+/// Slots in the wall he is building. Bottom row of four, top row of three,
+/// staggered — it reads as brickwork and needs seven of the twelve rocks.
+const SLOTS: usize = 7;
+const SLOT_GRID: [(f32, f32); SLOTS] = [
+    (0.0, 0.0),
+    (1.0, 0.0),
+    (2.0, 0.0),
+    (3.0, 0.0),
+    (0.5, 1.0),
+    (1.5, 1.0),
+    (2.5, 1.0),
+];
 const BED_SLOTS: usize = 6;
-const WORLD_SCALE: f32 = 3.2; // world is this many screens wide
+const WORLD_SCALE: f32 = 3.8; // world is this many screens wide
+// quarry on the left, building site past it, and open ground beyond that —
+// somewhere to tip a load that is NOT the wall
 const TIP_MAX: f32 = 0.62;
 
 /// How far the truck actually stands above the ground line, as a fraction of
@@ -71,6 +85,10 @@ const BIRD: Rgb = (66, 84, 90);
 const BUSH: Rgb = (86, 122, 92);
 const BUSH_DARK: Rgb = (66, 98, 72);
 const TRACK: Rgb = (120, 94, 60);
+const CHALK: Rgb = (222, 214, 196);
+const MORTAR: Rgb = (104, 92, 78);
+const POLE: Rgb = (108, 92, 70);
+const FLAG_C: Rgb = (200, 71, 31);
 
 const NUMERAL: Rgb = (36, 46, 52);
 const PIP_FULL: Rgb = (201, 154, 46);
@@ -183,9 +201,11 @@ impl Kind {
 enum Rock {
     Ground,
     Held,
-    Seating,
+    Seating, // flying to a slot in the bed
     InBed,
     Falling,
+    Setting, // flying to a slot in the wall
+    Built,   // part of the wall, and out of the physics
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -216,7 +236,8 @@ pub struct DumpTruck {
     size: [f32; ROCKS], // radius multiplier, so they are not all identical
     spin: [f32; ROCKS],
     kind: [Kind; ROCKS],
-    shape: [u32; ROCKS], // seed for the blob outline
+    shape: [u32; ROCKS], // seed for the outline
+    wall_slot: [usize; ROCKS],
 
     // truck
     /// +1 faces right, -1 faces left. The load always leaves out of the back,
@@ -255,6 +276,9 @@ pub struct DumpTruck {
     count: u32,
     pulse: f32,
     hauled: u32,
+    /// 0 until the wall is finished, then it climbs to 1 as the flag goes up.
+    flag: f32,
+    cheered: bool,
 
     // ambience
     puff_t: f32,
@@ -289,6 +313,7 @@ impl DumpTruck {
             spin: [0.0; ROCKS],
             kind: [Kind::Granite; ROCKS],
             shape: [0; ROCKS],
+            wall_slot: [0; ROCKS],
             facing: 1.0,
             turn: 1.0,
             tx: 0.0,
@@ -314,6 +339,8 @@ impl DumpTruck {
             count: 0,
             pulse: 0.0,
             hauled: 0,
+            flag: 0.0,
+            cheered: false,
             puff_t: 0.0,
             puffs: [(0.0, 0.0, 9.0); 6],
             puff_i: 0,
@@ -382,6 +409,78 @@ impl DumpTruck {
             x - self.bed_x(l)
         };
         (x, y - self.tip * arm)
+    }
+
+    /// Where the wall is being built: open ground just past the far end of the
+    /// quarry, so it comes into view soon after leaving the rocks — and so
+    /// getting a load into it means turning the truck round.
+    fn wall_x(&self, l: &L) -> f32 {
+        l.rock_r * 2.0 + (ROCKS as f32) * l.rock_r * 3.3 + l.rock_r * 6.0
+    }
+
+    fn slot_pos_wall(&self, l: &L, s: usize) -> (f32, f32) {
+        let d = l.rock_r * 2.15;
+        let (col, row) = SLOT_GRID[s];
+        (
+            self.wall_x(l) + d * (col + 0.5),
+            l.rock_line - l.rock_r - row * d * 0.86,
+        )
+    }
+
+    fn slot_taken(&self, s: usize) -> bool {
+        (0..ROCKS).any(|i| {
+            matches!(self.state[i], Rock::Built | Rock::Setting) && self.wall_slot[i] == s
+        })
+    }
+
+    /// The nearest empty slot, if the rock came to rest anywhere on the
+    /// building site. There is no distance test beyond the site's own width on
+    /// purpose: tipping a whole load at the wall should build the wall, not
+    /// leave a heap beside it with two stones that happened to land true.
+    fn free_wall_slot(&self, l: &L, x: f32) -> Option<usize> {
+        // The catch area is far wider than the wall itself — wider than the
+        // truck, so a load tipped anywhere near the site lands in it. The wall
+        // is only about four rocks across; a window that size is narrower than
+        // the truck that has to straddle it, and every load misses.
+        let d = l.rock_r * 2.15;
+        let centre = self.wall_x(l) + d * 2.0;
+        if fabs(x - centre) > l.truck_w * 0.62 {
+            return None;
+        }
+        let mut best = None;
+        let mut best_d = l.world_w;
+        for s in 0..SLOTS {
+            if self.slot_taken(s) {
+                continue;
+            }
+            let (sx, _) = self.slot_pos_wall(l, s);
+            let gap = fabs(sx - x);
+            if gap < best_d {
+                best_d = gap;
+                best = Some(s);
+            }
+        }
+        best
+    }
+
+    fn wall_built(&self) -> u32 {
+        (0..ROCKS)
+            .filter(|&i| self.state[i] == Rock::Built)
+            .count() as u32
+    }
+
+    /// Put a rock into the wall if it came to rest near an empty slot. Used by
+    /// a hand-placed rock and by one tipped out of the bed alike, so hauling a
+    /// load to the wall builds it without him having to place each stone.
+    fn try_wall(&mut self, l: &L, i: usize) -> bool {
+        if let Some(s) = self.free_wall_slot(l, self.rx[i]) {
+            self.wall_slot[i] = s;
+            self.state[i] = Rock::Setting;
+            self.vx[i] = 0.0;
+            self.vy[i] = 0.0;
+            return true;
+        }
+        false
     }
 
     fn free_slot(&self) -> Option<usize> {
@@ -542,6 +641,15 @@ impl DumpTruck {
             self.vx[i] *= fx;
             self.vy[i] *= fu;
         }
+        // Stones already in the wall belong to their slot, not to a scaled
+        // coordinate: the wall itself has moved and resized too.
+        for i in 0..ROCKS {
+            if self.state[i] == Rock::Built {
+                let (wx, wy) = self.slot_pos_wall(l, self.wall_slot[i]);
+                self.rx[i] = wx;
+                self.ry[i] = wy;
+            }
+        }
         self.tx = clamp(self.tx * fx, 0.0, l.world_w - l.truck_w);
         self.drag_target = self.tx;
         self.tv = 0.0;
@@ -603,6 +711,30 @@ impl DumpTruck {
                 self.turn = 1.0;
             }
             self.moved = true;
+        }
+
+        // the wall
+        if self.wall_built() as usize >= SLOTS {
+            if !self.cheered {
+                self.cheered = true;
+                sfx(audio::DONE, 1.0);
+            }
+            if self.flag < 1.0 {
+                self.flag += s * 1.1;
+                if self.flag > 1.0 {
+                    self.flag = 1.0;
+                }
+                self.moved = true;
+            }
+        } else {
+            self.cheered = false;
+            if self.flag > 0.0 {
+                self.flag -= s * 2.0;
+                if self.flag < 0.0 {
+                    self.flag = 0.0;
+                }
+                self.moved = true;
+            }
         }
 
         self.lamp = if self.lamp > 0.0 { self.lamp - s * 1.6 } else { 0.0 };
@@ -776,7 +908,9 @@ impl DumpTruck {
                     if self.ry[i] >= floor {
                         self.ry[i] = floor;
                         let impact = fabs(self.vy[i]) / (l.u * 0.9);
-                        if fabs(self.vy[i]) > l.u * 0.35 {
+                        if self.free_wall_slot(l, self.rx[i]).is_some() && self.try_wall(l, i) {
+                            // landed on the building site: straight into the wall
+                        } else if fabs(self.vy[i]) > l.u * 0.35 {
                             // heavier rocks keep less of the bounce
                             let restitution = 0.30 * (1.0 - 0.30 * (self.size[i] - PEBBLE));
                             self.vy[i] = -self.vy[i] * restitution;
@@ -789,6 +923,8 @@ impl DumpTruck {
                             sfx(hit, if impact > 1.0 { 1.0 } else { impact });
                             self.shake = if impact > 0.6 { 0.6 } else { impact };
                             self.puff(self.rx[i], self.ry[i] + r * 0.6);
+                        } else if self.try_wall(l, i) {
+                            // it came down on the building site
                         } else {
                             // A gentle landing still makes a noise. Silence
                             // here breaks the rule the whole game is built on:
@@ -808,6 +944,23 @@ impl DumpTruck {
                     self.rx[i] = clamp(self.rx[i], r + 2.0, l.world_w - r - 2.0);
                     self.moved = true;
                 }
+                Rock::Setting => {
+                    let (tx, ty) = self.slot_pos_wall(l, self.wall_slot[i]);
+                    self.rx[i] += (tx - self.rx[i]) * 13.0 * s;
+                    self.ry[i] += (ty - self.ry[i]) * 13.0 * s;
+                    self.spin[i] *= 1.0 - 6.0 * s;
+                    if fabs(tx - self.rx[i]) < 2.0 && fabs(ty - self.ry[i]) < 2.0 {
+                        self.rx[i] = tx;
+                        self.ry[i] = ty;
+                        self.spin[i] = 0.0;
+                        self.state[i] = Rock::Built;
+                        sfx(audio::SET, self.wall_built() as f32);
+                        self.shake = 0.35;
+                        self.puff(tx, ty + l.rock_r);
+                    }
+                    self.moved = true;
+                }
+                Rock::Built => {}
                 Rock::Seating => {
                     let (tx, ty) = self.slot_pos(l, self.slot[i]);
                     self.rx[i] += (tx - self.rx[i]) * 15.0 * s;
@@ -966,7 +1119,10 @@ impl Game for DumpTruck {
                     // the truck, so it would steal every drive and every tap.
                     // A loaded bed is emptied by tipping it, which is also how
                     // the real thing works.
-                    let grabbable = self.state[i] == Rock::Ground;
+                    // Built rocks can be taken back out — nothing he makes is
+                    // ever locked in.
+                    let grabbable =
+                        matches!(self.state[i], Rock::Ground | Rock::Built);
                     if !grabbable {
                         continue;
                     }
@@ -1037,6 +1193,8 @@ impl Game for DumpTruck {
                             self.slot[i] = s;
                             self.state[i] = Rock::Seating;
                             self.set_count(self.count + 1);
+                        } else if self.try_wall(&l, i) {
+                            // laid straight into the wall
                         } else {
                             // Anywhere else is simply "on the ground". Never
                             // wrong, never refused.
@@ -1205,6 +1363,22 @@ impl Game for DumpTruck {
             g += 34;
         }
 
+        // ------------------------------------------------------- the wall
+        // Empty slots are drawn as pale outlines: he can see the shape of the
+        // thing before it exists, and how much of it is left.
+        for st in 0..SLOTS {
+            if self.slot_taken(st) {
+                continue;
+            }
+            let (wx, wy) = self.slot_pos_wall(&l, st);
+            let ri = l.rock_r as i32;
+            // A hollow chalk outline, not a filled shape: filled, it reads as
+            // a pale rock already sitting there. Hollow, it reads as a space
+            // waiting for one — which is the whole instruction.
+            fb.rock(sx(wx), wy as i32 + sh, ri, 0x2A6B_13C5, CHALK);
+            fb.rock(sx(wx), wy as i32 + sh, ri - 4, 0x2A6B_13C5, DIRT);
+        }
+
         // ----------------------------------------------------------- truck
         self.draw_truck(fb, &l, sh);
 
@@ -1212,8 +1386,51 @@ impl Game for DumpTruck {
         // are in front of it, which is what makes them findable and grabbable
         // instead of hidden behind a wheel.
         for i in 0..ROCKS {
-            if matches!(self.state[i], Rock::Ground | Rock::Falling) {
-                self.draw_rock(fb, &l, i, sx(self.rx[i]), self.ry[i] as i32 + sh, false);
+            if matches!(
+                self.state[i],
+                Rock::Ground | Rock::Falling | Rock::Setting | Rock::Built
+            ) {
+                if matches!(self.state[i], Rock::Built | Rock::Setting) {
+                    // A stone in the wall is dressed to fit its slot. Left at
+                    // its own size the courses read as a heap someone tipped
+                    // there rather than something built.
+                    self.draw_rock_at(
+                        fb,
+                        i,
+                        sx(self.rx[i]),
+                        self.ry[i] as i32 + sh,
+                        l.rock_r,
+                        false,
+                    );
+                    if self.state[i] == Rock::Built {
+                        let ri = l.rock_r as i32;
+                        fb.rect(
+                            sx(self.rx[i]) - ri,
+                            self.ry[i] as i32 + sh + ri - 2,
+                            ri * 2,
+                            3,
+                            MORTAR,
+                        );
+                    }
+                } else {
+                    self.draw_rock(fb, &l, i, sx(self.rx[i]), self.ry[i] as i32 + sh, false);
+                }
+            }
+        }
+
+        // the flag, once it is finished
+        if self.flag > 0.0 {
+            let (bx, by) = self.slot_pos_wall(&l, SLOTS - 2);
+            let px = sx(bx);
+            let base = by as i32 + sh - l.rock_r as i32;
+            let tall = (l.u * 0.20 * self.flag) as i32;
+            fb.rect(px, base - tall, 3, tall, POLE);
+            let fw = (l.u * 0.075 * self.flag) as i32;
+            let fh = (l.u * 0.05 * self.flag) as i32;
+            for row in 0..fh {
+                // a pennant: a triangle, drawn as narrowing rows
+                let inset = (fw * (row - fh / 2).abs() * 2) / (fh.max(1));
+                fb.rect(px + 3, base - tall + row, (fw - inset).max(1), 1, FLAG_C);
             }
         }
         if let Grab::RockIdx(i) = self.grab {

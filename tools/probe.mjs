@@ -109,7 +109,14 @@ function dragTruck(to) {
   const y = c ? c.ymid : px().H * 0.55;
   const from = c ? c.mid : t.mid;
   w.pointer(from, y, DOWN);
-  for (let i = 1; i <= 16; i++) w.pointer(from + (to - from) * i / 16, y, MOVE);
+  // A frame has to elapse between pointer events. The truck is moved inside
+  // step(), not in the pointer handler, so a drag with no ticks in it moves
+  // the truck precisely nowhere — and every assertion about driving quietly
+  // becomes vacuous.
+  for (let i = 1; i <= 16; i++) {
+    w.pointer(from + (to - from) * i / 16, y, MOVE);
+    tick(2);
+  }
   w.pointer(to, y, UP);
   return true;
 }
@@ -209,6 +216,8 @@ for (const [RW, RH] of [[480, 1039], [844, 390], [480, 480]]) {
   w.resize(RW, RH); tick(60);
   ok(w.best() === hauledBefore,
      `rotating keeps the world instead of re-dealing (hauled ${w.best()})`);
+  // the frame changed shape, so drive back to where the pile was left
+  toEnd(1); tick(140);
   ok(rocksLoose() > 0, "rocks are still on the ground after a rotation");
 
   // ---- A2: the horn still wins on the cab
