@@ -289,6 +289,14 @@ body {
   border-color: rgba(201, 154, 46, .55);
 }
 
+.sheet .diag {
+  margin: 2px 0 0;
+  font: 400 11px/1.5 ui-monospace, "SF Mono", Menlo, monospace;
+  color: var(--ink-soft);
+  text-align: center;
+  white-space: pre-wrap;
+}
+
 .sheet .minor {
   display: flex;
   gap: 10px;
@@ -348,6 +356,7 @@ body {
   <div class="sheet-inner">
     <h2>Choose a game</h2>
     <div id="picks"></div>
+    <p class="diag" id="diag"></p>
     <div class="minor">
       <button type="button" id="test">Test sound</button>
       <button type="button" id="fresh">Start a fresh world</button>
@@ -429,14 +438,39 @@ const Sound = (() => {
     } catch { silent = null; }
   }
   let revNext = 0, revOn = false;
+  // watchdog bookkeeping
+  let lastClock = -1, stalls = 0, rebuilds = 0, played = 0, dropped = 0;
   let muted = false;
   try { muted = localStorage.getItem(OFF_KEY) === "1"; } catch { muted = false; }
+
+  function teardown() {
+    try { if (eng) eng.stop(); } catch {}
+    try { if (hyd) hyd.stop(); } catch {}
+    try { if (ac) ac.close(); } catch {}
+    ac = master = noiseBuf = null;
+    eng = engGain = engFilt = hyd = hydGain = null;
+    lastClock = -1; stalls = 0;
+  }
+
+  // iOS can hand back a context that says "running" while its graph is dead —
+  // typically after an interruption (a call, another app's audio, the screen
+  // locking). Resuming does not revive it; only a fresh graph does.
+  function rebuild() {
+    rebuilds++;
+    teardown();
+    const c = ensure();
+    if (c && c.state !== "running") c.resume().catch(() => {});
+    holdSession();
+  }
 
   function ensure() {
     if (ac) return ac;
     const C = window.AudioContext || window.webkitAudioContext;
     if (!C) return null;
     ac = new C();
+    ac.onstatechange = () => {
+      if (ac && ac.state === "suspended") ac.resume().catch(() => {});
+    };
 
     master = ac.createGain();
     master.gain.value = muted ? 0 : 0.45;
@@ -502,9 +536,10 @@ const Sound = (() => {
   const NOTES = [392, 440, 523, 587, 659, 784, 880];
 
   function play(id, p) {
-    // Not resumed yet: the document-level unlock below retries on every touch,
-    // so there is no point hammering resume() sixty times a second from here.
-    if (!ac || ac.state !== "running") return;
+    // Not resumed yet: the watchdog and the document-level unlock retry, so
+    // there is no point hammering resume() sixty times a second from here.
+    if (!ac || ac.state !== "running") { dropped++; return; }
+    played++;
     switch (id) {
       case 0: tone("triangle", 300, 620, 0.10, 0.16); break;            // pickup
       case 1: thud(0.16, 700, 0.30); tone("sine", 180, 110, 0.12, 0.16); break; // seat
@@ -578,16 +613,46 @@ const Sound = (() => {
       } catch {}
     },
     state: () => (ac ? ac.state : "none"),
+
+    /// Called a few times a second from the frame loop. Everything about
+    /// mobile audio that breaks after it has started working is caught here:
+    /// a context that got suspended, and one that claims to be running while
+    /// its clock stands still.
+    watch() {
+      if (!ac) return;
+      if (ac.state !== "running") {
+        ac.resume().catch(() => {});
+        holdSession();
+        return;
+      }
+      if (ac.currentTime === lastClock) {
+        if (++stalls >= 3) { stalls = 0; rebuild(); }
+      } else {
+        stalls = 0;
+        lastClock = ac.currentTime;
+      }
+      if (silent && silent.paused) silent.play().catch(() => {});
+    },
+
+    info: () => ({
+      state: ac ? ac.state : "none",
+      clock: ac ? ac.currentTime.toFixed(1) : "-",
+      rebuilds,
+      played,
+      dropped,
+      media: silent ? (silent.paused ? "paused" : "playing") : "none",
+    }),
     /// An unmistakable noise, for working out whether the problem is the game
     /// or the device.
     test() {
       this.unlock();
       if (!ac || ac.state !== "running") return false;
-      const was = master.gain.value;
       master.gain.value = 0.6;
       tone("square", 523, 523, 0.18, 0.20);
       setTimeout(() => tone("square", 784, 784, 0.22, 0.20), 190);
-      setTimeout(() => { master.gain.value = was; }, 500);
+      // back to the canonical level, not to whatever it happened to be —
+      // pressing test twice used to latch the loud setting permanently
+      setTimeout(() => { if (master) master.gain.value = muted ? 0 : 0.45; }, 500);
       return true;
     },
     play,
@@ -598,8 +663,11 @@ const Sound = (() => {
       if (master) master.gain.value = muted ? 0 : 0.45;
       return muted;
     },
-    suspend() { if (ac && ac.state === "running") ac.suspend(); },
-    resume()  { if (ac && ac.state === "suspended") ac.resume(); },
+    suspend() { if (ac && ac.state === "running") ac.suspend().catch(() => {}); },
+    resume()  {
+      if (ac && ac.state !== "running") ac.resume().catch(() => {});
+      holdSession();
+    },
   };
 })();
 
@@ -623,9 +691,14 @@ for (const ev of ["pointerdown", "touchend", "click"]) {
   document.addEventListener(ev, () => Sound.unlock(), { capture: true });
 }
 
+// A page can come back from being hidden, from the bfcache, or from losing
+// focus, and iOS suspends audio for all three. Try to revive on all of them.
 document.addEventListener("visibilitychange", () => {
-  if (document.hidden) Sound.suspend(); else Sound.resume();
+  if (document.hidden) Sound.suspend();
+  else { Sound.resume(); Sound.watch(); }
 });
+addEventListener("pageshow", () => { Sound.resume(); Sound.watch(); });
+addEventListener("focus",    () => { Sound.resume(); Sound.watch(); });
 
 const pin = () => window.scrollTo(0, 0);
 addEventListener("orientationchange", () => setTimeout(pin, 120));
@@ -732,10 +805,15 @@ function switchTo(id) {
 // ----------------------------------------------------------------------- loop
 
 let prev = performance.now();
+let frames = 0;
 
 function loop(now) {
   const dt = now - prev;
   prev = now;
+
+  // Four times a second is plenty to catch a context that has died, and cheap
+  // enough not to matter.
+  if ((frames++ & 15) === 0) Sound.watch();
 
   wasm.tick(dt);
   ctx.putImageData(frame, 0, 0);
@@ -817,7 +895,15 @@ function closeSheet() {
   el("sheet").classList.remove("open");
 }
 
+function paintDiag() {
+  const i = Sound.info();
+  el("diag").textContent =
+    `audio ${i.state} · clock ${i.clock}s · played ${i.played} · dropped ${i.dropped}\n` +
+    `rebuilds ${i.rebuilds} · media ${i.media}`;
+}
+
 function paintMute() {
+  paintDiag();
   const st = Sound.state();
   el("mute").textContent =
     Sound.isMuted()      ? "Sound off" :
