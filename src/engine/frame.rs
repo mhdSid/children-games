@@ -230,6 +230,35 @@ impl Frame {
         }
     }
 
+    /// Grade the whole frame: multiply each channel, then lift.
+    ///
+    /// Applied after everything is drawn, so one call re-lights the entire
+    /// scene — water, stones, moss and every creature in it — without any of
+    /// them needing to know a theme exists.
+    pub fn grade(&mut self, mr: f32, mg: f32, mb: f32, lift: i32) {
+        if mr == 1.0 && mg == 1.0 && mb == 1.0 && lift == 0 {
+            return;
+        }
+        let live = width() * height() * 4;
+        let buf = self.buf();
+        let clamp8 = |v: f32| -> u8 {
+            if v < 0.0 {
+                0
+            } else if v > 255.0 {
+                255
+            } else {
+                v as u8
+            }
+        };
+        let mut i = 0;
+        while i < live {
+            buf[i] = clamp8(buf[i] as f32 * mr + lift as f32);
+            buf[i + 1] = clamp8(buf[i + 1] as f32 * mg + lift as f32);
+            buf[i + 2] = clamp8(buf[i + 2] as f32 * mb + lift as f32);
+            i += 4;
+        }
+    }
+
     pub fn dim(&mut self, amount: u16) {
         let live = width() * height() * 4;
         let buf = self.buf();

@@ -385,6 +385,33 @@ console.log("\n=== the pond ===")
   tick(400)
   ok(w.score() > 1, "he can keep throwing (" + w.score() + " so far)")
 
+  ok(w.theme_count() >= 4, "the pond has several lights to see it in (" + w.theme_count() + ")")
+  {
+    const before = px().d.slice(0, 4000)
+    w.next_theme(); tick(4)
+    const after = px().d.slice(0, 4000)
+    let differs = 0
+    for (let i = 0; i < before.length; i++) if (before[i] !== after[i]) differs++
+    ok(differs > 500, "changing the light re-grades the whole scene (" + differs + " bytes)")
+  }
+
+  // picking a creature up and putting it down again
+  {
+    sfx.length = 0
+    let heldOne = false
+    for (let gx = W * 0.05; gx < W * 0.95 && !heldOne; gx += 26) {
+      for (let gy = H * 0.05; gy < H * 0.95 && !heldOne; gy += 26) {
+        if (Math.hypot(gx - W / 2, gy - H / 2) < W * 0.30) continue   // skip the water
+        sfx.length = 0
+        w.pointer(gx, gy, DOWN); tick(3)
+        w.pointer(gx, gy - 40, MOVE); tick(3)
+        w.pointer(gx, gy - 40, UP); tick(6)
+        if (sfx.some(id => [18, 19, 20, 22, 23].includes(id))) heldOne = true
+      }
+    }
+    ok(heldOne, "something living can be picked up off the floor and set down")
+  }
+
   // a touch on open water always answers
   sfx.length = 0
   w.pointer(W * 0.5, H * 0.5, DOWN); w.pointer(W * 0.5, H * 0.5, UP); tick(4)

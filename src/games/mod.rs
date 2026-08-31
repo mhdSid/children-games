@@ -37,6 +37,14 @@ pub trait Game {
     /// Turn around. Only games with something that faces a direction care.
     fn flip(&mut self) {}
 
+    /// Move to the next look, if the game has more than one.
+    fn next_theme(&mut self) {}
+
+    /// How many looks it has. Zero means the page should not offer the control.
+    fn theme_count(&self) -> u32 {
+        0
+    }
+
     /// Whether the page should offer a turn-around button for this game.
     fn can_flip(&self) -> bool {
         false

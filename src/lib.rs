@@ -98,6 +98,20 @@ pub extern "C" fn can_flip() -> u32 {
     }
 }
 
+/// Move the current game to its next look.
+#[no_mangle]
+pub extern "C" fn next_theme() {
+    let g = games::get(current_id());
+    g.next_theme();
+    g.draw(&mut Frame::new());
+}
+
+/// How many looks the current game has. 0 means it has only the one.
+#[no_mangle]
+pub extern "C" fn theme_count() -> u32 {
+    games::get(current_id()).theme_count()
+}
+
 /// Which way the vehicle faces: 1 right, -1 left, 0 if it has no facing.
 #[no_mangle]
 pub extern "C" fn facing() -> i32 {

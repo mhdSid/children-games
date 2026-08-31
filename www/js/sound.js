@@ -240,6 +240,22 @@ const Sound = (() => {
       case 20:                                                           // something small
         tone("sine", 900 + p * 500, 500, 0.07, 0.07 + p * 0.05)
         break
+      case 22:                                                           // a beetle
+        thud(0.05, 3200, 0.10 + p * 0.12)
+        tone("square", 2400 + p * 900, 1900, 0.03, 0.03)
+        break
+      case 23: {                                                         // wings
+        const src = ac.createBufferSource(); src.buffer = noiseBuf
+        const f = ac.createBiquadFilter(); f.type = "bandpass"
+        f.frequency.value = 1400; f.Q.value = 1.6
+        const g = ac.createGain()
+        g.gain.setValueAtTime(0.0001, ac.currentTime)
+        g.gain.exponentialRampToValueAtTime(0.05 * (0.4 + p), ac.currentTime + 0.03)
+        g.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime + 0.34)
+        src.connect(f); f.connect(g); g.connect(master)
+        src.start(); src.stop(ac.currentTime + 0.36)
+        break
+      }
       case 21: {                                                         // off in the trees
         const n = [1568, 1760, 2093][Math.floor(p * 3) % 3]
         tone("sine", n, n * 1.06, 0.09, 0.05)

@@ -31,6 +31,8 @@ pub const LAP: u32 = 17; // continuous; how busy the water is
 pub const CROAK: u32 = 18; // a frog
 pub const BUZZ: u32 = 19; // a dragonfly leaving in a hurry
 pub const PLIP: u32 = 20; // something small breaking the surface
+pub const CLICK: u32 = 22; // a beetle
+pub const FLUTTER: u32 = 23; // wings
 pub const CHIRP: u32 = 21; // a bird, or a cricket, somewhere off in the trees
 
 /// Fire a sound. Safe wrapper so nothing else in the tree needs `unsafe`.

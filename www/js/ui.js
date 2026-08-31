@@ -20,6 +20,7 @@ export function applyGame (wasm, id) {
   el("pad").hidden  = !g.pad
   el("turn").hidden = !wasm.can_flip()
   el("hint").classList.toggle("above-pad", g.keys)
+  el("light").hidden = wasm.theme_count() < 2
   el("readout").classList.toggle("on", g.readout);
   [...el("picks").querySelectorAll(".pick")].forEach((b, i) =>
     b.setAttribute("aria-pressed", String(i === id)))
@@ -75,7 +76,7 @@ export function closeSheet () {
 
 /* ------------------------------------------------------------------ wiring */
 
-export function wireUi (wasm, { onPick, onRestart }) {
+export function wireUi (wasm, { onPick, onRestart, onLight }) {
   const host = el("picks")
   host.replaceChildren()
   const wrap = document.createElement("div")
@@ -102,6 +103,8 @@ export function wireUi (wasm, { onPick, onRestart }) {
   // Somewhere to start over. The truck game keeps everything he does, so
   // without this a world he is unhappy with is one he is stuck in.
   el("fresh").addEventListener("click", () => { onRestart(); closeSheet() })
+
+  el("light").addEventListener("click", () => { onLight(); closeSheet() })
 
   el("mute").addEventListener("click", () => { Sound.unlock(); Sound.toggle(); paintMute() })
 

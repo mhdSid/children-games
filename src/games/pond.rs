@@ -20,16 +20,34 @@ const FISH: usize = 5;
 const REEDS: usize = 26;
 const BOULDERS: usize = 14;
 const RIM_STONES: usize = 38;
-const CRITTERS: usize = 15;
+const PROPS: usize = 54;
+const CRITTERS: usize = 24;
 
 // ------------------------------------------------------------------- colours
 //
 // A rock pool on a shaded forest floor: dark all round, so the water is the
 // brightest thing on the screen and the eye goes straight to it.
 
-const FLOOR: Rgb = (44, 54, 52);
-const FLOOR_DARK: Rgb = (34, 43, 42);
-const FLOOR_LIT: Rgb = (58, 70, 66);
+// A terrarium floor, not a void: damp earth with moss growing over it, and
+// things living in it. The dark ring round the pool used to be nothing at all,
+// which is half the picture wasted.
+const FLOOR: Rgb = (68, 78, 58);
+const FLOOR_DARK: Rgb = (54, 62, 46);
+const FLOOR_LIT: Rgb = (86, 98, 70);
+const SOIL: Rgb = (76, 60, 46);
+const SOIL_DARK: Rgb = (58, 46, 36);
+const MOSS_PATCH: Rgb = (92, 138, 62);
+const MOSS_PATCH_HI: Rgb = (124, 168, 82);
+const FERN: Rgb = (78, 134, 66);
+const FERN_HI: Rgb = (108, 164, 88);
+const CAP: Rgb = (206, 82, 64);
+const CAP_SPOT: Rgb = (244, 238, 226);
+const STEM: Rgb = (232, 224, 206);
+const PETAL: Rgb = (244, 226, 246);
+const PETAL_GOLD: Rgb = (250, 226, 132);
+const LITTER: Rgb = (152, 112, 62);
+const LITTER_DARK: Rgb = (118, 86, 50);
+const TWIG: Rgb = (96, 74, 52);
 
 const MOSS: Rgb = (104, 150, 66);
 const MOSS_DARK: Rgb = (74, 116, 50);
@@ -39,9 +57,14 @@ const RIM: Rgb = (96, 100, 100);
 const RIM_DARK: Rgb = (68, 72, 74);
 const RIM_LIGHT: Rgb = (128, 132, 130);
 
-const SHALLOW: Rgb = (128, 164, 176);
-const MID: Rgb = (96, 136, 154);
-const DEEP: Rgb = (70, 106, 128);
+// Shallow water is bright because you can see the bottom through it; deep
+// water is dark because you cannot. Getting that the wrong way round — a lit
+// centre and shaded edges — makes a pond look like a painted disc.
+const SHOAL: Rgb = (170, 196, 190);   // sand showing through at the very edge
+const SHALLOW: Rgb = (128, 170, 178);
+const MID: Rgb = (78, 122, 146);
+const DEEP: Rgb = (42, 76, 104);
+const ABYSS: Rgb = (26, 52, 76);      // the middle, where the bottom is gone
 const GLINT: Rgb = (186, 216, 224);
 const CAUSTIC: Rgb = (158, 198, 212);
 const FOAM: Rgb = (238, 248, 250);
@@ -60,6 +83,17 @@ const BLOOM: Rgb = (246, 186, 206);
 const BLOOM_MID: Rgb = (250, 226, 160);
 const REED: Rgb = (96, 146, 70);
 
+/// The light the pool is seen in. Applied to the finished frame, so a theme
+/// costs one line rather than a second palette for every object in the scene.
+/// Multipliers per channel, then a lift.
+const THEMES: [(f32, f32, f32, i32, &str); 5] = [
+    (1.00, 1.00, 1.00, 0, "fern"),      // daylight under the trees
+    (1.12, 0.96, 0.78, 6, "amber"),     // late afternoon, warm and low
+    (0.62, 0.72, 1.05, -6, "moonlit"),  // cold, blue, quiet
+    (1.10, 0.88, 0.70, 2, "autumn"),    // rust and gold
+    (0.84, 1.04, 0.94, 10, "misty")     // pale, washed out, early
+];
+
 const FISH_A: Rgb = (232, 138, 60);
 const FISH_B: Rgb = (244, 198, 82);
 const SHADOW: Rgb = (30, 44, 48);
@@ -76,6 +110,11 @@ const NEWT_SPOT: Rgb = (66, 46, 36);
 const SNAIL: Rgb = (206, 176, 132);
 const SNAIL_SHELL: Rgb = (168, 118, 70);
 const WING: Rgb = (198, 226, 234);
+const BEETLE: Rgb = (62, 76, 62);
+const LADYBIRD: Rgb = (206, 62, 52);
+const WING_A: Rgb = (246, 186, 92);
+const WING_B: Rgb = (238, 148, 176);
+const WORM: Rgb = (216, 148, 148);
 const DFLY: Rgb = (86, 158, 196);
 
 /// Pebbles a river would actually produce: warm and cool stones, each clearly
@@ -106,6 +145,10 @@ enum Critter {
     Turtle,    // paddles slowly, pulls in when touched
     Newt,      // crawls around the rim
     Snail,     // barely moves at all, and that is the joke
+    Beetle,    // trundles over the floor
+    Ladybird,  // wanders, and is very red
+    Butterfly, // loops about above the moss
+    Worm       // half in the soil, going nowhere in particular
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -131,6 +174,8 @@ pub struct Pond {
     sunk_at: [f32; ROCKS],
 
     held: i32,
+    cheld: i32, // the creature currently cupped in his hand, or -1
+    cvoice: f32,
     grab_dx: f32,
     grab_dy: f32,
     // the last two pointer samples, so a release can throw with the flick
@@ -144,6 +189,7 @@ pub struct Pond {
     lilies: [(f32, f32, f32); LILIES],   // x, y, phase
     fish: [(f32, f32, f32); FISH],       // x, y, heading (index into DIRS8, as f32)
     reeds: [(f32, f32, f32); REEDS],     // x, y, height
+    props: [(f32, f32, u8); PROPS],      // x, y, what it is
     boulders: [(f32, f32, f32); BOULDERS], // x, y, scale
 
     // the living things
@@ -156,6 +202,7 @@ pub struct Pond {
     ctimer: [f32; CRITTERS], // counts down a reaction: a hop, a dart, a hide
     chome: [f32; CRITTERS],  // the pad a frog belongs to, as an index
 
+    theme: usize,
     t: f32,
     busy: f32, // how much the water is moving, for the ambient sound
     chirp_t: f32,
@@ -180,6 +227,8 @@ impl Pond {
             state: [Pebble::Bank; ROCKS],
             sunk_at: [0.0; ROCKS],
             held: -1,
+            cheld: -1,
+            cvoice: 0.0,
             grab_dx: 0.0,
             grab_dy: 0.0,
             px: 0.0,
@@ -191,6 +240,7 @@ impl Pond {
             lilies: [(0.0, 0.0, 0.0); LILIES],
             fish: [(0.0, 0.0, 0.0); FISH],
             reeds: [(0.0, 0.0, 0.0); REEDS],
+            props: [(0.0, 0.0, 0); PROPS],
             boulders: [(0.0, 0.0, 0.0); BOULDERS],
             ckind: [Critter::Tadpole; CRITTERS],
             cx: [0.0; CRITTERS],
@@ -200,6 +250,7 @@ impl Pond {
             cphase: [0.0; CRITTERS],
             ctimer: [0.0; CRITTERS],
             chome: [0.0; CRITTERS],
+            theme: 0,
             t: 0.0,
             busy: 0.0,
             chirp_t: 0.0,
@@ -324,16 +375,41 @@ impl Pond {
                 0.5 + rng.unit(),
             );
         }
+        // Everything growing on the floor around the pool. Placed only where
+        // there is no water, and never on top of the rim.
+        for k in 0..PROPS {
+            let hh = crate::engine::frame::hash(k as u32 * 97 + 13);
+            let mut px = w * 0.5;
+            let mut py = h * 0.06;
+            for tries in 0..40 {
+                let a = crate::engine::frame::hash(hh ^ (tries * 7919));
+                let b = crate::engine::frame::hash(hh ^ (tries * 104729) ^ 0x5A);
+                let qx = (a & 4095) as f32 / 4095.0 * w;
+                let qy = (b & 4095) as f32 / 4095.0 * h;
+                // dry ground only: outside the water AND clear of the stone rim
+                if self.depth(w, h, qx, qy) < -0.38 {
+                    px = qx;
+                    py = qy;
+                    break;
+                }
+            }
+            self.props[k] = (px, py, (hh % 6) as u8);
+        }
+
         // Who lives here. Frogs get a lily pad each; everything else finds its
         // own place in or around the water.
         for k in 0..CRITTERS {
-            let kind = match k % 6 {
+            let kind = match k % 10 {
                 0 => Critter::Frog,
                 1 => Critter::Dragonfly,
                 2 => Critter::Tadpole,
                 3 => Critter::Turtle,
                 4 => Critter::Newt,
-                _ => Critter::Snail
+                5 => Critter::Snail,
+                6 => Critter::Beetle,
+                7 => Critter::Ladybird,
+                8 => Critter::Butterfly,
+                _ => Critter::Worm
             };
             self.ckind[k] = kind;
             self.cphase[k] = rng.unit();
@@ -350,8 +426,27 @@ impl Pond {
                 }
                 Critter::Newt | Critter::Snail => {
                     // out on the rim, where the stones are
-                    self.cx[k] = cx + wave(a + 0.11) * rx * 1.06;
+                    self.cx[k] = cx + wave_q(a + 0.11) * rx * 1.06;
                     self.cy[k] = cy + wave(a + 0.42) * ry * 1.06;
+                }
+                Critter::Beetle | Critter::Ladybird | Critter::Butterfly | Critter::Worm => {
+                    // out on the floor, in among the moss and the leaves
+                    let mut placed = false;
+                    for tries in 0..40 {
+                        let hh = crate::engine::frame::hash(k as u32 * 331 + tries);
+                        let qx = (hh & 4095) as f32 / 4095.0 * w;
+                        let qy = ((hh >> 12) & 4095) as f32 / 4095.0 * h;
+                        if self.depth(w, h, qx, qy) < -0.40 {
+                            self.cx[k] = qx;
+                            self.cy[k] = qy;
+                            placed = true;
+                            break;
+                        }
+                    }
+                    if !placed {
+                        self.cx[k] = w * 0.06;
+                        self.cy[k] = h * 0.10;
+                    }
                 }
                 _ => {
                     self.cx[k] = cx + wave(a + 0.19) * rx * 0.62;
@@ -361,6 +456,7 @@ impl Pond {
         }
 
         self.held = -1;
+        self.cheld = -1;
         self.ready = true;
     }
 
@@ -425,6 +521,22 @@ impl Pond {
             Critter::Snail => {
                 self.ctimer[k] = 2.2;           // withdraws, extremely slowly
                 sfx(audio::PLIP, 0.15);
+            }
+            Critter::Beetle | Critter::Ladybird => {
+                self.cvx[k] = dx * u * 0.34;
+                self.cvy[k] = dy * u * 0.34;
+                self.ctimer[k] = 0.8;
+                sfx(audio::CLICK, 0.5 + rng.unit() * 0.5);
+            }
+            Critter::Butterfly => {
+                self.cvx[k] = dx * u * 0.55;
+                self.cvy[k] = dy * u * 0.55 - u * 0.2;
+                self.ctimer[k] = 1.1;
+                sfx(audio::FLUTTER, 1.0);
+            }
+            Critter::Worm => {
+                self.ctimer[k] = 1.8;           // pulls down into the soil
+                sfx(audio::PLIP, 0.2);
             }
         }
     }
@@ -617,9 +729,61 @@ impl Pond {
                 Critter::Snail => {
                     self.cx[k] += wave(self.cphase[k] * 0.05) * u * 0.004 * s;
                 }
+                Critter::Beetle | Critter::Ladybird => {
+                    self.cx[k] += self.cvx[k] * s;
+                    self.cy[k] += self.cvy[k] * s;
+                    self.cvx[k] *= 1.0 - 2.2 * s;
+                    self.cvy[k] *= 1.0 - 2.2 * s;
+                    if rng.unit() < 0.7 * s {
+                        let dir = DIRS8[(rng.next() % 8) as usize];
+                        self.cvx[k] = dir.0 * u * 0.05;
+                        self.cvy[k] = dir.1 * u * 0.05;
+                    }
+                    // never walks into the pool
+                    if self.depth(w, h, self.cx[k], self.cy[k]) > -0.34 {
+                        self.cvx[k] = (self.cx[k] - pcx) * 0.5;
+                        self.cvy[k] = (self.cy[k] - pcy) * 0.5;
+                    }
+                    if rng.unit() < 0.10 * s {
+                        sfx(audio::CLICK, 0.2 + rng.unit() * 0.3);
+                    }
+                }
+                Critter::Butterfly => {
+                    // loops, rather than travels
+                    let loop_x = wave(self.cphase[k] * 0.5) * u * 0.10;
+                    let loop_y = wave(self.cphase[k] * 0.5 + 0.25) * u * 0.07;
+                    self.cx[k] += (self.cvx[k] + loop_x) * s;
+                    self.cy[k] += (self.cvy[k] + loop_y) * s;
+                    self.cvx[k] *= 1.0 - 1.6 * s;
+                    self.cvy[k] *= 1.0 - 1.6 * s;
+                    if self.depth(w, h, self.cx[k], self.cy[k]) > -0.30 {
+                        self.cvx[k] += (self.cx[k] - pcx) * 0.4 * s;
+                        self.cvy[k] += (self.cy[k] - pcy) * 0.4 * s;
+                    }
+                }
+                Critter::Worm => {
+                    self.cx[k] += wave(self.cphase[k] * 0.5) * u * 0.010 * s;
+                }
             }
             self.cx[k] = clamp(self.cx[k], u * 0.02, w - u * 0.02);
             self.cy[k] = clamp(self.cy[k], u * 0.02, h - u * 0.02);
+        }
+
+        // whatever is in his hand keeps wriggling, and keeps talking
+        if self.cheld >= 0 {
+            let k = self.cheld as usize;
+            self.ctimer[k] = 0.4;                       // stays in its startled pose
+            self.cvoice -= s;
+            if self.cvoice <= 0.0 {
+                self.cvoice = 0.55 + rng.unit() * 0.7;
+                match self.ckind[k] {
+                    Critter::Frog => sfx(audio::CROAK, 0.3 + rng.unit() * 0.6),
+                    Critter::Dragonfly | Critter::Butterfly => sfx(audio::FLUTTER, 0.8),
+                    Critter::Beetle | Critter::Ladybird => sfx(audio::CLICK, 0.6),
+                    _ => sfx(audio::PLIP, 0.4)
+                }
+            }
+            self.moved = true;
         }
 
         // something calling from the trees, now and then
@@ -662,6 +826,15 @@ impl Game for Pond {
         self.thrown
     }
 
+    fn next_theme(&mut self) {
+        self.theme = (self.theme + 1) % THEMES.len();
+        sfx(audio::CHIRP, 0.5);
+    }
+
+    fn theme_count(&self) -> u32 {
+        THEMES.len() as u32
+    }
+
     fn pointer(&mut self, x: f32, y: f32, phase: u32, rng: &mut Rng) {
         let (w, h) = (crate::engine::width() as f32, crate::engine::height() as f32);
         let u = if w < h { w } else { h };
@@ -694,7 +867,14 @@ impl Game for Pond {
                 // for a stone. Throwing is the main verb; the frogs are what he
                 // finds when he stops throwing.
                 if pick < 0 {
-                    if let Some(k) = self.critter_near(x, y, u * 0.075) {
+                    if let Some(k) = self.critter_near(x, y, u * 0.085) {
+                        // Cupped in the hand rather than merely poked. Holding
+                        // a small animal gently is most of the appeal of a
+                        // terrarium, and it costs nothing to allow.
+                        self.cheld = k as i32;
+                        self.cvoice = 0.0;
+                        self.grab_dx = self.cx[k] - x;
+                        self.grab_dy = self.cy[k] - y;
                         self.startle(k, w, h, x, y, rng);
                         self.moved = true;
                         return;
@@ -764,9 +944,29 @@ impl Game for Pond {
                     self.x[i] = clamp(x + self.grab_dx, 0.0, w);
                     self.y[i] = clamp(y + self.grab_dy, 0.0, h);
                 }
+                if self.cheld >= 0 {
+                    let k = self.cheld as usize;
+                    self.cx[k] = clamp(x + self.grab_dx, 0.0, w);
+                    self.cy[k] = clamp(y + self.grab_dy, 0.0, h);
+                }
                 self.moved = true;
             }
             UP => {
+                if self.cheld >= 0 {
+                    // Set down wherever he lets go, and off it goes. A frog
+                    // put back in the water gets a ripple for its trouble.
+                    let k = self.cheld as usize;
+                    self.cheld = -1;
+                    self.ctimer[k] = 0.6;
+                    if self.depth(w, h, self.cx[k], self.cy[k]) > 0.0 {
+                        self.ripple(self.cx[k], self.cy[k]);
+                        sfx(audio::PLIP, 0.7);
+                    } else {
+                        sfx(audio::CLICK, 0.3);
+                    }
+                    self.moved = true;
+                    return;
+                }
                 if self.held >= 0 {
                     let i = self.held as usize;
                     self.state[i] = Pebble::Flying;
@@ -800,6 +1000,70 @@ impl Game for Pond {
             fb.rect(g, k, (u * 0.05) as i32, 3, FLOOR_DARK);
             fb.rect(g + 17, (k * 3) % hi, (u * 0.03) as i32, 2, FLOOR_LIT);
             g += 23;
+        }
+
+        // ---------------------------------------------------- what grows here
+        for k in 0..PROPS {
+            let (px, py, kind) = self.props[k];
+            let hh = hash(k as u32 * 53 + 3);
+            let sc = 0.7 + (hh & 63) as f32 / 63.0 * 0.7;
+            let (x, y) = (px as i32, py as i32);
+            let sway = wave(self.t * 0.25 + k as f32 * 0.17) * u * 0.006;
+            match kind {
+                0 => {
+                    // a patch of moss, low and spreading
+                    let r = (u * 0.055 * sc) as i32;
+                    fb.rock(x, y, r, hh, MOSS_PATCH);
+                    fb.rock(x - r / 4, y - r / 4, r / 2, hh ^ 0x2B1, MOSS_PATCH_HI);
+                }
+                1 => {
+                    // a fern: a stem with fronds stepping down it
+                    let tall = (u * 0.10 * sc) as i32;
+                    fb.rect(x, y - tall, 3, tall, FERN);
+                    for f in 0..5 {
+                        let fy = y - tall + f * tall / 5;
+                        let fw = (u * 0.035 * sc * (1.0 - f as f32 * 0.14)) as i32;
+                        let c = if f % 2 == 0 { FERN } else { FERN_HI };
+                        fb.rect(x - fw + (sway * 0.5) as i32, fy, fw, 3, c);
+                        fb.rect(x + (sway * 0.5) as i32, fy + 2, fw, 3, c);
+                    }
+                }
+                2 => {
+                    // a toadstool
+                    let r = (u * 0.030 * sc) as i32;
+                    fb.rect(x - r / 3, y - r, (r * 2 / 3).max(2), r, STEM);
+                    fb.fill_ellipse(x, y - r, r, r * 2 / 3, CAP);
+                    fb.disc(x - r / 3, y - r - r / 5, r / 5, CAP_SPOT);
+                    fb.disc(x + r / 2, y - r, r / 6, CAP_SPOT);
+                }
+                3 => {
+                    // small flowers
+                    let r = (u * 0.012 * sc) as i32 + 2;
+                    let tall = (u * 0.045 * sc) as i32;
+                    fb.rect(x, y - tall, 2, tall, FERN);
+                    let c = if hh % 2 == 0 { PETAL } else { PETAL_GOLD };
+                    for pdir in 0..4 {
+                        let d = DIRS8[pdir * 2];
+                        fb.disc(x + (d.0 * r as f32 * 1.2) as i32,
+                                y - tall + (d.1 * r as f32 * 1.2) as i32, r, c);
+                    }
+                    fb.disc(x, y - tall, r, PETAL_GOLD);
+                }
+                4 => {
+                    // a fallen leaf
+                    let r = (u * 0.028 * sc) as i32;
+                    let c = if hh % 3 == 0 { LITTER } else { LITTER_DARK };
+                    fb.fill_ellipse(x, y, r, r / 2, c);
+                    fb.rect(x - r, y, r * 2, 1, SOIL_DARK);
+                }
+                _ => {
+                    // a twig, and the soil it lies on
+                    let len = (u * 0.06 * sc) as i32;
+                    fb.fill_ellipse(x, y, len, (u * 0.014) as i32, SOIL);
+                    fb.rect(x - len / 2, y, len, 3, TWIG);
+                    fb.rect(x + len / 6, y - 4, len / 3, 3, TWIG);
+                }
+            }
         }
 
         // ------------------------------------------------- the mossy stone rim
@@ -836,35 +1100,48 @@ impl Game for Pond {
         }
 
         // ------------------------------------------------------------- water
-        // Lit from the near side: the far edge sits in the shadow of the bank,
-        // the water in front of him is brighter. A symmetric radial fade reads
-        // as a painted target; this reads as a pool with light on it.
-        let lit_y = cy + ry * 0.22;
-        let bands = 20;
+        // Bright at the rim where the bottom shows through, falling away fast
+        // to something you cannot see into. The steepness of that fall is what
+        // reads as depth: a gentle gradient looks like a shallow puddle.
+        let bands = 30;
         for b in 0..bands {
             let k = b as f32 / bands as f32;
             let wob = wave(self.t * 0.16 + k * 1.7) * u * 0.004;
-            let q = (k * 255.0) as u32;
-            let c = if k < 0.45 {
-                let qq = (k / 0.45 * 255.0) as u32;
-                (crate::engine::lerp(DEEP.0, MID.0, qq),
-                 crate::engine::lerp(DEEP.1, MID.1, qq),
-                 crate::engine::lerp(DEEP.2, MID.2, qq))
+            // most of the darkening happens in the first third, the way a
+            // bank shelves off
+            let d = k * k * (3.0 - 2.0 * k);           // smoothstep
+            let c = if d < 0.35 {
+                let q = (d / 0.35 * 255.0) as u32;
+                (crate::engine::lerp(SHOAL.0, SHALLOW.0, q),
+                 crate::engine::lerp(SHOAL.1, SHALLOW.1, q),
+                 crate::engine::lerp(SHOAL.2, SHALLOW.2, q))
+            } else if d < 0.72 {
+                let q = ((d - 0.35) / 0.37 * 255.0) as u32;
+                (crate::engine::lerp(SHALLOW.0, MID.0, q),
+                 crate::engine::lerp(SHALLOW.1, MID.1, q),
+                 crate::engine::lerp(SHALLOW.2, MID.2, q))
             } else {
-                let qq = ((k - 0.45) / 0.55 * 255.0) as u32;
-                (crate::engine::lerp(MID.0, SHALLOW.0, qq),
-                 crate::engine::lerp(MID.1, SHALLOW.1, qq),
-                 crate::engine::lerp(MID.2, SHALLOW.2, qq))
+                let q = ((d - 0.72) / 0.28 * 255.0) as u32;
+                (crate::engine::lerp(MID.0, ABYSS.0, q),
+                 crate::engine::lerp(MID.1, ABYSS.1, q),
+                 crate::engine::lerp(MID.2, ABYSS.2, q))
             };
-            let _ = q;
-            let er = rx * (1.0 - k * 0.92) + wob;
-            let ey = ry * (1.0 - k * 0.92) + wob;
-            // each band creeps toward the lit point, so the gradient leans
-            let bx = cx + (cx - cx) * k;
-            let by = cy + (lit_y - cy) * k;
+            let er = rx * (1.0 - k * 0.98) + wob;
+            let ey = ry * (1.0 - k * 0.98) + wob;
             if er > 1.0 && ey > 1.0 {
-                fb.fill_ellipse(bx as i32, by as i32, er as i32, ey as i32, c);
+                fb.fill_ellipse(cx as i32, cy as i32, er as i32, ey as i32, c);
             }
+        }
+
+        // Grit on the bottom, visible only in the shallows — the clearest
+        // possible statement that there IS a bottom, and that it drops away.
+        for k in 0..40 {
+            let hh = hash(k as u32 * 41 + 17);
+            let t = (hh & 1023) as f32 / 1023.0;
+            let rr = 0.80 + ((hh >> 10) & 63) as f32 / 63.0 * 0.17;
+            let gx = cx + rx * rr * wave_q(t);
+            let gy = cy + ry * rr * wave(t);
+            fb.rock(gx as i32, gy as i32, (u * 0.010) as i32 + 1, hh, SHOAL);
         }
 
         // The standing swell: many broken arcs at scattered radii, drifting.
@@ -927,10 +1204,13 @@ impl Game for Pond {
             }
             let r = self.rock_r(w, h, i) * 0.92;
             let (body, _) = PEBBLES[self.kind[i] as usize % PEBBLES.len()];
+            // the deeper it lies, the more the water takes it
+            let d = self.depth(w, h, self.x[i], self.y[i]);
+            let veil = (60.0 + d * 190.0) as u32;
             let sunkc = (
-                crate::engine::lerp(body.0, DEEP.0, 120),
-                crate::engine::lerp(body.1, DEEP.1, 120),
-                crate::engine::lerp(body.2, DEEP.2, 120),
+                crate::engine::lerp(body.0, ABYSS.0, veil),
+                crate::engine::lerp(body.1, ABYSS.1, veil),
+                crate::engine::lerp(body.2, ABYSS.2, veil),
             );
             fb.rock(self.x[i] as i32, self.y[i] as i32, r as i32, self.shape[i], sunkc);
         }
@@ -990,7 +1270,14 @@ impl Game for Pond {
         // shell with a head and four feet, a snail is a spiral. He should be
         // able to name them without being told.
         for k in 0..CRITTERS {
-            let (x, y) = (self.cx[k] as i32, self.cy[k] as i32);
+            let inhand = self.cheld == k as i32;
+            let lift = if inhand { (u * 0.055) as i32 } else { 0 };
+            if inhand {
+                // its shadow stays on the ground, so it reads as picked up
+                fb.fill_ellipse(self.cx[k] as i32, self.cy[k] as i32,
+                                (u * 0.030) as i32, (u * 0.014) as i32, SHADOW);
+            }
+            let (x, y) = (self.cx[k] as i32, self.cy[k] as i32 - lift);
             let busy = self.ctimer[k] > 0.0;
             match self.ckind[k] {
                 Critter::Frog => {
@@ -1105,6 +1392,56 @@ impl Game for Pond {
                         fb.rect(x - spot * r / 2, y - r / 4, 3, 3, NEWT_SPOT);
                     }
                 }
+                Critter::Beetle => {
+                    let r = (u * 0.024) as i32;
+                    for leg in 0..3 {
+                        let ly = y - r / 2 + leg * r / 2;
+                        fb.rect(x - r - r / 2, ly, r / 2, 2, SHADOW);
+                        fb.rect(x + r, ly, r / 2, 2, SHADOW);
+                    }
+                    fb.fill_ellipse(x, y, r, r * 3 / 4, BEETLE);
+                    fb.rect(x - 1, y - r * 3 / 4, 2, r * 3 / 2, SHADOW);   // wing case
+                    fb.disc(x - r * 3 / 4, y, r / 3, SHADOW);              // head
+                    fb.rect(x - r - r / 2, y - r / 2, r / 2, 2, SHADOW);   // antennae
+                    fb.rect(x - r - r / 2, y + r / 2, r / 2, 2, SHADOW);
+                }
+                Critter::Ladybird => {
+                    let r = (u * 0.020) as i32;
+                    for leg in 0..3 {
+                        let ly = y - r / 2 + leg * r / 2;
+                        fb.rect(x - r - r / 3, ly, r / 3, 2, SHADOW);
+                        fb.rect(x + r, ly, r / 3, 2, SHADOW);
+                    }
+                    fb.fill_ellipse(x, y, r, r * 4 / 5, LADYBIRD);
+                    fb.rect(x - 1, y - r * 4 / 5, 2, r * 8 / 5, SHADOW);
+                    fb.disc(x - r * 4 / 5, y, r / 2, SHADOW);
+                    fb.disc(x + r / 3, y - r / 3, r / 4, SHADOW);
+                    fb.disc(x + r / 3, y + r / 3, r / 4, SHADOW);
+                    fb.disc(x - r / 4, y + r / 4, r / 5, SHADOW);
+                }
+                Critter::Butterfly => {
+                    let beat = fabs(wave(self.cphase[k] * 7.0));
+                    let ww = (u * 0.030 * (0.35 + 0.65 * beat)) as i32;
+                    let c = if k % 2 == 0 { WING_A } else { WING_B };
+                    fb.fill_ellipse(x - ww, y - ww / 2, ww, ww * 3 / 4, c);
+                    fb.fill_ellipse(x + ww, y - ww / 2, ww, ww * 3 / 4, c);
+                    fb.fill_ellipse(x - ww * 3 / 4, y + ww / 2, ww * 2 / 3, ww / 2, WING_B);
+                    fb.fill_ellipse(x + ww * 3 / 4, y + ww / 2, ww * 2 / 3, ww / 2, WING_B);
+                    fb.rect(x - 1, y - ww / 2, 3, ww, SHADOW);
+                    fb.rect(x - 3, y - ww / 2 - 3, 2, 4, SHADOW);
+                    fb.rect(x + 2, y - ww / 2 - 3, 2, 4, SHADOW);
+                }
+                Critter::Worm => {
+                    let r = (u * 0.010) as i32 + 1;
+                    let hidden = busy;
+                    let segs = if hidden { 2 } else { 5 };
+                    for seg in 0..segs {
+                        let t = seg as f32;
+                        let wig = wave(self.cphase[k] * 0.9 + t * 0.22) * u * 0.014;
+                        fb.disc(x + (t * u * 0.016) as i32, y + wig as i32, r, WORM);
+                    }
+                    fb.fill_ellipse(x - r, y + r, (u * 0.022) as i32, r, SOIL_DARK);
+                }
                 Critter::Snail => {
                     let r = (u * 0.028) as i32;
                     // foot
@@ -1196,5 +1533,9 @@ impl Game for Pond {
                         0x3F5A_11C7 ^ (k as u32 * 2246822519), LEAF[k % 3]);
             }
         }
+
+        // ---------------------------------------------------------- the light
+        let (mr, mg, mb, lift, _name) = THEMES[self.theme % THEMES.len()];
+        fb.grade(mr, mg, mb, lift);
     }
 }
