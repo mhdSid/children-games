@@ -439,7 +439,7 @@ const Sound = (() => {
       silent.play().catch(() => {});
     } catch { silent = null; }
   }
-  let revNext = 0, revOn = false;
+  let revNext = 0;
   // watchdog bookkeeping
   let lastClock = -1, stalls = 0, rebuilds = 0, played = 0, dropped = 0;
   let muted = false;
@@ -582,8 +582,7 @@ const Sound = (() => {
         break;
       }
       case 6: {                                                          // reversing
-        revOn = p > 0.5;
-        if (revOn && ac.currentTime > revNext) {
+        if (p > 0.5 && ac.currentTime > revNext) {
           revNext = ac.currentTime + 0.62;
           tone("square", 1050, 1050, 0.16, 0.07);
         }
@@ -727,12 +726,12 @@ for (const ev of ["pointerdown", "touchend", "click"]) {
 
 // A page can come back from being hidden, from the bfcache, or from losing
 // focus, and iOS suspends audio for all three. Try to revive on all of them.
+const revive = () => { Sound.resume(); Sound.watch(); };
 document.addEventListener("visibilitychange", () => {
-  if (document.hidden) Sound.suspend();
-  else { Sound.resume(); Sound.watch(); }
+  if (document.hidden) Sound.suspend(); else revive();
 });
-addEventListener("pageshow", () => { Sound.resume(); Sound.watch(); });
-addEventListener("focus",    () => { Sound.resume(); Sound.watch(); });
+addEventListener("pageshow", revive);
+addEventListener("focus", revive);
 
 const pin = () => window.scrollTo(0, 0);
 addEventListener("orientationchange", () => setTimeout(pin, 120));
@@ -1009,7 +1008,6 @@ addEventListener("keydown", (e) => {
 // pointerdown, not click: a toddler's finger lands and leaves elsewhere
 el("turn").addEventListener("pointerdown", (e) => {
   e.preventDefault();
-  Sound.unlock();
   if (!wasm) return;
   wasm.flip();
   const b = el("turn");
@@ -1042,7 +1040,6 @@ let sx = 0, sy = 0, activePointer = null;
 canvas.addEventListener("pointerdown", (e) => {
   if (!wasm || activePointer !== null) return;   // a second finger is ignored
   e.preventDefault();
-  Sound.unlock();
   canvas.setPointerCapture(e.pointerId);
   activePointer = e.pointerId;
   sx = e.clientX; sy = e.clientY;

@@ -217,9 +217,17 @@ for (const [RW, RH] of [[480, 1039], [844, 390], [480, 480]]) {
   w.resize(RW, RH); tick(60);
   ok(w.best() === hauledBefore,
      `rotating keeps the world instead of re-dealing (hauled ${w.best()})`);
-  // the frame changed shape, so drive back to where the pile was left
-  toEnd(1); tick(140);
-  ok(rocksLoose() > 0, "rocks are still on the ground after a rotation");
+  // The frame changed shape, so go and look for the rocks rather than
+  // assuming where they are — both ends of the world are crushers now, so
+  // anything tipped at an end has been eaten, and the quarry sits somewhere in
+  // between at a position that depends on the new frame.
+  toEnd(0); tick(140);
+  let found = 0;
+  for (let sweep = 0; sweep < 8 && found === 0; sweep++) {
+    found = rocksLoose();
+    if (found === 0) { dragTruck(W * 0.9); tick(120); }
+  }
+  ok(found > 0, "the rocks are still somewhere in the world after a rotation");
 
   // ---- A2: the horn still wins on the cab
   sfx.length = 0;

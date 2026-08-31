@@ -17,6 +17,7 @@ use crate::games::Game;
 const ROCKS: usize = 12;
 /// Slots in the wall he is building. Bottom row of four, top row of three,
 /// staggered — it reads as brickwork and needs seven of the twelve rocks.
+const MILLS: usize = 2; // one at each end of the world
 const SLOTS: usize = 7;
 const SLOT_GRID: [(f32, f32); SLOTS] = [
     (0.0, 0.0),
@@ -292,11 +293,12 @@ pub struct DumpTruck {
     cheered: bool,
 
     // the crusher
-    feed_t: [f32; ROCKS],  // progress falling into the hopper, or time milled
-    gravel: u32,           // every rock ever put through it
-    gems: u32,
-    mill: f32,             // how hard it is working, 0..1, decays
-    jaw: f32,              // the jaw's shudder
+    feed_t: [f32; ROCKS],   // descent down the throat, or time spent milled
+    mill_of: [u8; ROCKS],   // which machine swallowed it
+    gravel: [u32; MILLS],   // every rock ever put through that one
+    gems: [u32; MILLS],
+    mill: [f32; MILLS],     // how hard it is working, 0..1, decays
+    jaw: [f32; MILLS],      // the jaw's shudder
 
     // ambience
     puff_t: f32,
@@ -360,10 +362,11 @@ impl DumpTruck {
             flag: 0.0,
             cheered: false,
             feed_t: [0.0; ROCKS],
-            gravel: 0,
-            gems: 0,
-            mill: 0.0,
-            jaw: 0.0,
+            mill_of: [0; ROCKS],
+            gravel: [0; MILLS],
+            gems: [0; MILLS],
+            mill: [0.0; MILLS],
+            jaw: [0.0; MILLS],
             puff_t: 0.0,
             puffs: [(0.0, 0.0, 9.0); 6],
             puff_i: 0,
@@ -439,31 +442,74 @@ impl DumpTruck {
     /// a tip throws the load out behind him — so driving just past the hopper
     /// and tipping drops it straight in, with no turning required. Turning is
     /// for the wall.
-    /// The middle of the hopper's mouth, placed exactly where a load lands when
-    /// the truck is driven to the end of the world. Driving to the end IS
-    /// arriving at the crusher — there is no parking puzzle to solve, and the
-    /// mouth sits at about the height of a loaded bed so a tipped rock falls in
-    /// rather than having to fly up to a roof.
-    fn hopper_x(&self, l: &L) -> f32 {
-        l.world_w - l.truck_w * 1.15
+    /// Ground left clear beyond each machine, so neither is jammed against the
+    /// end of the world.
+    fn pad(&self, l: &L) -> f32 {
+        l.truck_w * 0.8
     }
 
-    /// Left edge of the hopper. The machine runs rightward from here.
-    fn crusher_x(&self, l: &L) -> f32 {
-        self.hopper_x(l) - l.truck_w * 0.21
+    /// Mill 0 sits at the left end, mill 1 at the right, each placed exactly
+    /// where a load lands when the truck is driven as far that way as it will
+    /// go. Driving to the end IS arriving at a crusher: no parking puzzle.
+    ///
+    /// The left one can only be fed facing left, and the right one facing
+    /// right, because the load always leaves out of the back — so between them
+    /// they give the turn button a reason to exist.
+    fn hopper_x(&self, l: &L, m: usize) -> f32 {
+        if m == 0 {
+            self.pad(l) + l.truck_w * 1.15
+        } else {
+            l.world_w - self.pad(l) - l.truck_w * 1.15
+        }
     }
 
-    /// A mouth far wider than the truck. Same rule as the wall: he should never
+    /// How far the truck may drive. It stops at the machines rather than
+    /// driving through them, which also means arriving is automatic: hold the
+    /// drag until it will not go any further and the bed is over the mouth.
+    fn drive_range(&self, l: &L) -> (f32, f32) {
+        (self.pad(l), l.world_w - l.truck_w - self.pad(l))
+    }
+
+    /// Mouth of the funnel: top, bottom, and half-width at the top. The top has
+    /// to sit BELOW the loaded bed or a tipped rock would have to fly upward to
+    /// get in — which is exactly what it used to do, landing on the ground
+    /// instead and then sinking through it.
+    fn mouth(&self, l: &L) -> (f32, f32, f32) {
+        (
+            l.ground - l.truck_w * 0.19,
+            l.ground - l.truck_w * 0.01,
+            l.truck_w * 0.23,
+        )
+    }
+
+    /// Which machine, if any, a rock at (x, y) is falling into. Caught in the
+    /// air at the mouth rather than after it has landed: that is what makes it
+    /// visibly drop IN instead of vanishing on the ground beside the thing.
+    fn into_mouth(&self, l: &L, x: f32, y: f32, r: f32) -> Option<usize> {
+        let (top, bot, half) = self.mouth(l);
+        if y + r < top || y > bot {
+            return None;
+        }
+        for m in 0..MILLS {
+            if fabs(x - self.hopper_x(l, m)) < half {
+                return Some(m);
+            }
+        }
+        None
+    }
+
+    /// A far wider catch, used once a rock has already come to rest: near
+    /// enough counts, and it rolls in. Same rule as the wall — he should never
     /// have to solve an approach puzzle to use the thing.
-    fn over_hopper(&self, l: &L, x: f32) -> bool {
-        fabs(x - self.hopper_x(l)) < l.truck_w * 0.55
+    fn beside_hopper(&self, l: &L, x: f32) -> Option<usize> {
+        (0..MILLS).find(|&m| fabs(x - self.hopper_x(l, m)) < l.truck_w * 0.42)
     }
 
     /// Where the wall is being built: open ground just past the far end of the
     /// quarry, so it comes into view soon after leaving the rocks — and so
     /// getting a load into it means turning the truck round.
     fn wall_x(&self, l: &L) -> f32 {
-        l.rock_r * 2.0 + (ROCKS as f32) * l.rock_r * 3.3 + l.rock_r * 6.0
+        self.hopper_x(l, 0) + l.truck_w * 0.9 + (ROCKS as f32) * l.rock_r * 3.3 + l.rock_r * 6.0
     }
 
     fn slot_pos_wall(&self, l: &L, s: usize) -> (f32, f32) {
@@ -761,10 +807,16 @@ impl DumpTruck {
             self.moved = true;
         }
 
-        // the crusher: a held note while it works, and a jaw that shudders
-        self.mill = if self.mill > 0.0 { self.mill - s * 0.8 } else { 0.0 };
-        self.jaw = if self.jaw > 0.0 { self.jaw - s * 3.0 } else { 0.0 };
-        sfx(audio::MILL, self.mill);
+        // the crushers: a held note while they work, and jaws that shudder
+        let mut work = 0.0;
+        for m in 0..MILLS {
+            self.mill[m] = if self.mill[m] > 0.0 { self.mill[m] - s * 0.8 } else { 0.0 };
+            self.jaw[m] = if self.jaw[m] > 0.0 { self.jaw[m] - s * 3.0 } else { 0.0 };
+            if self.mill[m] > work {
+                work = self.mill[m];
+            }
+        }
+        sfx(audio::MILL, work);
 
         // the wall
         if self.wall_built() as usize >= SLOTS {
@@ -799,8 +851,9 @@ impl DumpTruck {
         // Moving it here, on the fixed timestep, is what makes velocity a real
         // per-second quantity instead of a per-event delta that assumed 60 Hz —
         // which is what used to make the camera jump on a fast drag.
+        let (lo_x, hi_x) = self.drive_range(l);
         if self.grab == Grab::Truck {
-            let want = clamp(self.drag_target, 0.0, l.world_w - l.truck_w);
+            let want = clamp(self.drag_target, lo_x, hi_x);
             // Follow the finger with a little weight rather than snapping to
             // it. Snapping made the POSITION exact but the velocity spiky:
             // pointer events arrive at a different rate than this fixed step,
@@ -816,7 +869,7 @@ impl DumpTruck {
             // coast to a stop when he lets go
             self.tv *= 1.0 - 3.4 * s;
             self.tx += self.tv * s;
-            self.tx = clamp(self.tx, 0.0, l.world_w - l.truck_w);
+            self.tx = clamp(self.tx, lo_x, hi_x);
         }
         self.tv_smooth += (self.tv - self.tv_smooth) * 8.0 * s;
         self.wheel_a += self.tv_smooth * s / (l.wheel_r * 0.9);
@@ -954,6 +1007,15 @@ impl DumpTruck {
                     self.vy[i] += l.u * 3.4 * s;
                     self.rx[i] += self.vx[i] * s;
                     self.ry[i] += self.vy[i] * s;
+                    if let Some(m) = self.into_mouth(l, self.rx[i], self.ry[i], r) {
+                        self.state[i] = Rock::Feeding;
+                        self.mill_of[i] = m as u8;
+                        self.feed_t[i] = 0.0;
+                        self.vx[i] = 0.0;
+                        self.vy[i] = 0.0;
+                        self.moved = true;
+                        continue;
+                    }
                     self.vx[i] *= 1.0 - 1.5 * s;
                     self.spin[i] += self.vx[i] * s / (r * 0.9); // big rocks turn slower
 
@@ -961,8 +1023,9 @@ impl DumpTruck {
                     if self.ry[i] >= floor {
                         self.ry[i] = floor;
                         let impact = fabs(self.vy[i]) / (l.u * 0.9);
-                        if self.over_hopper(l, self.rx[i]) {
+                        if let Some(m) = self.beside_hopper(l, self.rx[i]) {
                             self.state[i] = Rock::Feeding;
+                            self.mill_of[i] = m as u8;
                             self.feed_t[i] = 0.0;
                             self.vx[i] = 0.0;
                             self.vy[i] = 0.0;
@@ -981,8 +1044,9 @@ impl DumpTruck {
                             sfx(hit, if impact > 1.0 { 1.0 } else { impact });
                             self.shake = if impact > 0.6 { 0.6 } else { impact };
                             self.puff(self.rx[i], self.ry[i] + r * 0.6);
-                        } else if self.over_hopper(l, self.rx[i]) {
+                        } else if let Some(m) = self.beside_hopper(l, self.rx[i]) {
                             self.state[i] = Rock::Feeding;
+                            self.mill_of[i] = m as u8;
                             self.feed_t[i] = 0.0;
                             self.vx[i] = 0.0;
                             self.vy[i] = 0.0;
@@ -1008,22 +1072,28 @@ impl DumpTruck {
                     self.moved = true;
                 }
                 Rock::Feeding => {
-                    // slides to the mouth and shrinks as it disappears inside
-                    let hx = self.hopper_x(l);
-                    self.rx[i] += (hx - self.rx[i]) * 9.0 * s;
-                    self.ry[i] += l.u * 0.55 * s;
-                    self.feed_t[i] += s * 1.6;
+                    // Down the throat: converging on the centre line as the
+                    // funnel narrows, and shrinking as it goes out of sight.
+                    let m = self.mill_of[i] as usize;
+                    let (top, bot, _) = self.mouth(l);
+                    let hx = self.hopper_x(l, m);
+                    self.feed_t[i] += s * 1.5;
+                    let k = if self.feed_t[i] > 1.0 { 1.0 } else { self.feed_t[i] };
+                    self.rx[i] += (hx - self.rx[i]) * 7.0 * s;
+                    self.ry[i] = top + (bot - top) * k;
                     if self.feed_t[i] >= 1.0 {
                         self.state[i] = Rock::Milled;
                         self.feed_t[i] = 0.0;
-                        self.gravel += 1;
-                        self.mill = 1.0;
-                        self.jaw = 1.0;
-                        self.shake = 0.5;
+                        self.gravel[m] += 1;
+                        self.mill[m] = 1.0;
+                        self.jaw[m] = 1.0;
+                        self.shake = 0.7;
+                        // dust coughs out of the top as it bites
+                        self.puff(hx, top - l.truck_w * 0.10);
                         sfx(audio::CRUNCH, self.size[i]);
-                        if self.gravel % 5 == 0 {
-                            self.gems += 1;
-                            sfx(audio::GEM, self.gems as f32);
+                        if self.gravel[m] % 5 == 0 {
+                            self.gems[m] += 1;
+                            sfx(audio::GEM, self.gems[m] as f32);
                         }
                     }
                     self.moved = true;
@@ -1036,7 +1106,8 @@ impl DumpTruck {
                     if self.feed_t[i] > 3.5 {
                         self.state[i] = Rock::Ground;
                         self.feed_t[i] = 0.0;
-                        self.rx[i] = l.rock_r * 2.0 + rng.unit() * l.rock_r * 6.0;
+                        self.rx[i] =
+                            self.hopper_x(l, 0) + l.truck_w * 0.9 + rng.unit() * l.rock_r * 6.0;
                         self.ry[i] = l.rock_line - l.rock_r * self.size[i];
                         self.vx[i] = 0.0;
                         self.vy[i] = 0.0;
@@ -1269,7 +1340,8 @@ impl Game for DumpTruck {
                 Grab::Truck => {
                     // Record the intent only. step() moves the truck and
                     // derives the velocity from real elapsed time.
-                    self.drag_target = clamp(x + self.grab_off, 0.0, l.world_w - l.truck_w);
+                    let (dlo, dhi) = self.drive_range(&l);
+                    self.drag_target = clamp(x + self.grab_off, dlo, dhi);
                     // Drag versus tap is decided by how far the FINGER moved,
                     // not the truck. Judging it by the truck means that once
                     // it is pinned against the end of the world every push
@@ -1463,8 +1535,10 @@ impl Game for DumpTruck {
             g += 34;
         }
 
-        // ---------------------------------------------------- the crusher
-        self.draw_crusher(fb, &l, sh, &sx);
+        // --------------------------------------------------- the crushers
+        for m in 0..MILLS {
+            self.draw_crusher(fb, &l, sh, &sx, m);
+        }
 
         // ------------------------------------------------------- the wall
         // Empty slots are drawn as pale outlines: he can see the shape of the
@@ -1593,116 +1667,131 @@ impl Game for DumpTruck {
 }
 
 impl DumpTruck {
-    fn draw_crusher<F: Fn(f32) -> i32>(&self, fb: &mut Frame, l: &L, sh: i32, sx: &F) {
+    fn draw_crusher<F: Fn(f32) -> i32>(
+        &self,
+        fb: &mut Frame,
+        l: &L,
+        sh: i32,
+        sx: &F,
+        m: usize,
+    ) {
         let t = l.truck_w;
-        let x0 = sx(self.crusher_x(l));
-        if x0 < -(t as i32) * 2 || x0 > l.w as i32 + t as i32 * 2 {
+        let hopper = self.hopper_x(l, m);
+        let hc = sx(hopper);
+        if hc < -(t as i32) * 3 || hc > l.w as i32 + t as i32 * 3 {
             return; // off screen
         }
         let g = l.ground as i32 + sh;
-        // it shudders as it bites
-        let jolt = if self.jaw > 0.0 {
-            ((self.jaw * 11.0) as i32 % 3) - 1
+        let (top_f, bot_f, half_f) = self.mouth(l);
+        let hop_top = top_f as i32 + sh;
+        let hop_bot = bot_f as i32 + sh;
+        let half = half_f as i32;
+
+        // Mill 0 stands at the left end and faces the other way, so the whole
+        // machine is mirrored about its own mouth.
+        let flip = m == 0;
+        let dir = if flip { -1 } else { 1 };
+        let jolt = if self.jaw[m] > 0.0 {
+            ((self.jaw[m] * 11.0) as i32 % 3) - 1
         } else {
             0
         };
+        // a span at `off` from the mouth, `w` wide, on the machine's side
+        let sp = |off: i32, w: i32| -> (i32, i32) {
+            let a = hc + dir * off;
+            let b = hc + dir * (off + w);
+            (if a < b { a } else { b }, (b - a).abs().max(1))
+        };
 
-        let hop_w = (t * 0.42) as i32; // mouth
-        let throat = (t * 0.15) as i32; // where it narrows to
-        let hop_top = g - (t * 0.46) as i32;
-        let hop_bot = g - (t * 0.17) as i32;
-        let body_x = x0 + hop_w;
         let body_w = (t * 0.52) as i32;
-        let body_top = g - (t * 0.60) as i32;
+        let body_top = g - (t * 0.62) as i32;
+        let (bx, bw) = sp(half + (t * 0.04) as i32, body_w);
 
-        // ---- a conveyor carrying the gravel out to a heap on the near side.
-        // The output used to sit behind the machine, which is exactly where the
-        // truck parks to tip — so the one thing that records everything he has
-        // ever crushed was permanently hidden behind the truck.
-        let heap_cx = x0 - (t * 0.34) as i32;
-        let belt_y0 = body_top + (t * 0.06) as i32;
-        let belt_y1 = g - (t * 0.20) as i32;
-        let belt_x0 = body_x + jolt;
-        let steps = (belt_x0 - heap_cx).max(1);
-        let mut bx = heap_cx;
-        while bx < belt_x0 {
-            let k = (bx - heap_cx) as f32 / steps as f32;
-            let by = belt_y1 + ((belt_y0 - belt_y1) as f32 * k) as i32;
-            fb.rect(bx, by, 4, (t * 0.035) as i32, STEEL_DARK);
-            fb.rect(bx, by, 4, 3, STEEL_LIGHT);
-            bx += 4;
+        // ---- conveyor out to a heap on the far side of the mouth, where the
+        // truck never parks. Behind the funnel, so the funnel stands in front.
+        let heap_cx = hc - dir * (t * 0.42) as i32;
+        let belt_hi = body_top + (t * 0.06) as i32;
+        let belt_lo = g - (t * 0.22) as i32;
+        let belt_from = if flip { bx + bw } else { bx };
+        let steps = (belt_from - heap_cx).abs().max(1);
+        let mut step = 0;
+        while step < steps {
+            let k = step as f32 / steps as f32;
+            let px = heap_cx + (belt_from - heap_cx) * step / steps;
+            let py = belt_lo + ((belt_hi - belt_lo) as f32 * k) as i32;
+            fb.rect(px, py, 4, (t * 0.035) as i32, STEEL_DARK);
+            fb.rect(px, py, 4, 3, STEEL_LIGHT);
+            step += 4;
         }
-        // legs under the belt
-        fb.rect(heap_cx + (t * 0.10) as i32, belt_y1, 3, g - belt_y1, STEEL_DARK);
-
-        // ---- the hopper: a steel funnel, walls drawn thick enough to read as
-        // metal rather than as a hole cut in the sky
-        let depth = (hop_bot - hop_top).max(1);
-        let wall = (t * 0.022) as i32 + 2;
-        let cx = x0 + hop_w / 2 + jolt;
-        // a leg, so the funnel stands on the ground instead of hovering
-        fb.rect(cx - (t * 0.03) as i32, hop_bot, (t * 0.06) as i32, g - hop_bot, STEEL_DARK);
-        for row in 0..depth {
-            let k = row as f32 / depth as f32;
-            let half = (hop_w as f32 * 0.5 * (1.0 - k)) as i32 + throat / 2;
-            let y = hop_top + row;
-            fb.rect(cx - half, y, half * 2, 1, MOUTH); // the dark inside
-            // Thick, light walls. Thin ones left it reading as a hole cut out
-            // of the sky rather than a steel funnel.
-            fb.rect(cx - half - wall, y, wall, 1, STEEL_LIGHT);
-            fb.rect(cx + half, y, wall, 1, STEEL_DARK);
-        }
-        // a bright lip, so the mouth is obvious from across the world
-        fb.rect(x0 - wall + jolt, hop_top - 4, hop_w + wall * 2, 5, STEEL_LIGHT);
-        fb.rect(x0 - wall + jolt, hop_top + 1, hop_w + wall * 2, 2, HAZARD);
+        fb.rect(heap_cx + dir * (t * 0.10) as i32, belt_lo, 3, g - belt_lo, STEEL_DARK);
 
         // ---- the body
-        fb.rect(body_x + jolt, body_top, body_w, g - body_top, STEEL);
-        fb.rect(body_x + jolt, body_top, body_w, (t * 0.02) as i32, STEEL_LIGHT);
-        fb.rect(body_x + jolt, g - (t * 0.06) as i32, body_w, (t * 0.02) as i32, STEEL_DARK);
-        // hazard stripes
+        fb.rect(bx + jolt, body_top, bw, g - body_top, STEEL);
+        fb.rect(bx + jolt, body_top, bw, (t * 0.02) as i32, STEEL_LIGHT);
+        fb.rect(bx + jolt, g - (t * 0.06) as i32, bw, (t * 0.02) as i32, STEEL_DARK);
+        // The jaw sits high on the body on purpose. Lower down it is behind
+        // the parked truck, and the one moment that shows the machine actually
+        // doing something happens where nobody can see it.
+        let open = ((t * 0.11) as i32 - (self.jaw[m] * t * 0.085) as i32).max(2);
+        fb.rect(
+            bx + jolt + bw / 7,
+            body_top + (t * 0.07) as i32,
+            bw * 5 / 7,
+            open,
+            MOUTH,
+        );
+        // a rocker above the jaw that drops as it bites
+        let rock_y = body_top + (t * 0.02) as i32 + (self.jaw[m] * t * 0.03) as i32;
+        fb.rect(bx + jolt + bw / 5, rock_y, bw * 3 / 5, (t * 0.03) as i32, STEEL_LIGHT);
+
         let mut hz = 0;
-        while hz < body_w - (t * 0.05) as i32 {
+        while hz < bw - (t * 0.05) as i32 {
             fb.rect(
-                body_x + jolt + hz + 4,
-                body_top + (t * 0.10) as i32,
+                bx + jolt + hz + 4,
+                body_top + (t * 0.22) as i32,
                 (t * 0.035) as i32,
-                (t * 0.045) as i32,
+                (t * 0.04) as i32,
                 HAZARD,
             );
             hz += (t * 0.075) as i32;
         }
-        // the jaw: a slot that snaps shut on the bite
-        let open = ((t * 0.09) as i32 - (self.jaw * t * 0.06) as i32).max(2);
-        fb.rect(
-            body_x + jolt + body_w / 6,
-            body_top + (t * 0.24) as i32,
-            body_w * 2 / 3,
-            open,
-            MOUTH,
-        );
-        // a chimney, puffing when it works
-        fb.rect(body_x + body_w - (t * 0.10) as i32, body_top - (t * 0.09) as i32,
-                (t * 0.05) as i32, (t * 0.09) as i32, STEEL_DARK);
+        // chimney on the outboard side
+        let (cx2, cw2) = sp(half + (t * 0.04) as i32 + body_w - (t * 0.11) as i32, (t * 0.05) as i32);
+        fb.rect(cx2, body_top - (t * 0.10) as i32, cw2, (t * 0.10) as i32, STEEL_DARK);
 
-        let heap = self.gravel.min(48) as i32;
+        // ---- the funnel, mouth low enough that a tipped load falls into it
+        let depth = (hop_bot - hop_top).max(1);
+        let wall = (t * 0.024) as i32 + 2;
+        // legs
+        fb.rect(hc - (t * 0.03) as i32, hop_bot, (t * 0.06) as i32, g - hop_bot, STEEL_DARK);
+        for row in 0..depth {
+            let k = row as f32 / depth as f32;
+            let hw = (half as f32 * (1.0 - k * 0.78)) as i32;
+            let y = hop_top + row;
+            fb.rect(hc - hw, y, hw * 2, 1, MOUTH);
+            fb.rect(hc - hw - wall, y, wall, 1, STEEL_LIGHT);
+            fb.rect(hc + hw, y, wall, 1, STEEL_DARK);
+        }
+        fb.rect(hc - half - wall + jolt, hop_top - 4, (half + wall) * 2, 5, STEEL_LIGHT);
+        fb.rect(hc - half - wall + jolt, hop_top + 1, (half + wall) * 2, 2, HAZARD);
+
+        // ---- the gravel it has made
+        let heap = self.gravel[m].min(48) as i32;
         if heap > 0 {
-            let hh = ((t * 0.02) as i32 + (heap as f32 * t * 0.011) as i32)
-                .min((t * 0.30) as i32);
+            let hh = ((t * 0.02) as i32 + (heap as f32 * t * 0.011) as i32).min((t * 0.30) as i32);
             let hw = hh * 3;
             for row in 0..hh {
                 let k = row as f32 / hh as f32;
-                let half = (hw as f32 * 0.5 * (1.0 - k * k)) as i32;
+                let w2 = (hw as f32 * 0.5 * (1.0 - k * k)) as i32;
                 fb.rect(
-                    heap_cx - half,
+                    heap_cx - w2,
                     g + (l.rock_r * 0.5) as i32 - row,
-                    half * 2,
+                    w2 * 2,
                     1,
                     if row > hh - 3 { GRAVEL_DARK } else { GRAVEL },
                 );
             }
-            // gems sit on the crown of the heap
-            for k in 0..self.gems.min(6) {
+            for k in 0..self.gems[m].min(6) {
                 let gx = heap_cx - (l.rock_r * 0.9) as i32 + k as i32 * (l.rock_r * 0.62) as i32;
                 let gy = g + (l.rock_r * 0.5) as i32 - hh - (l.rock_r * 0.30) as i32;
                 fb.disc(gx, gy, (l.rock_r * 0.30) as i32, GEM);

@@ -63,11 +63,16 @@ to face the other way.
 Put a rock on one and it snaps in, gets a seam of mortar, and stays. Fill all
 seven and a flag goes up. He can pull stones back out whenever he likes.
 
-**The crusher.** Right at the end of the world. Drive all the way to the end and
-tip — the load falls into the funnel, the machine bites and shudders, and gravel
-travels out along a conveyor onto a heap that grows with everything he has ever
-put through it. Every fifth rock makes a gem, and the gems sit on top of the
-heap where he can count them.
+**The crushers — one at each end of the world.** Drive as far as the truck will
+go and it stops at a machine, with the bed already over the mouth. Tip, and the
+load drops into the funnel: the jaw snaps, the whole machine shudders, dust
+coughs out of the top, and gravel travels along a conveyor onto a heap that
+grows with everything he has ever put through it. Every fifth rock makes a gem,
+and the gems sit on the crown of the heap where he can count them.
+
+The two are mirror images, and between them they give the turn button a reason
+to exist: the load always leaves out of the back, so the right-hand machine can
+only be fed facing right, and the left-hand one facing left.
 
 Nothing is ever used up. A crushed rock finds its way back to the quarry a few
 seconds later, so the world can never run out of things to carry.
