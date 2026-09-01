@@ -19,11 +19,23 @@ export function applyGame (wasm, id) {
   el("best-label").textContent  = g.best
   el("pad").hidden  = !g.pad
   el("turn").hidden = !wasm.can_flip()
-  el("hint").classList.toggle("above-pad", g.keys)
   el("light").hidden = wasm.theme_count() < 2
+  revive()
   el("readout").classList.toggle("on", g.readout);
   [...el("picks").querySelectorAll(".pick")].forEach((b, i) =>
     b.setAttribute("aria-pressed", String(i === id)))
+}
+
+/* The instruction has done its job once he has acted on it. */
+let spent = false
+
+/** Called on the first pointer down on the canvas, and on every fresh deal. */
+export function spendHint () {
+  spent = true
+}
+
+export function revive () {
+  spent = false
 }
 
 /** Called every frame: the score, the hint, and whether to offer a restart. */
@@ -38,8 +50,14 @@ export function paintFrame (wasm) {
 
   const text = g.hint(state, score)
   el("hint").textContent = text
+  // Spent on the first real touch, not on the first point scored. In the pond
+  // `score` is stones that have *landed*, so the hint used to survive the whole
+  // of picking one up and throwing it — the one moment it is in the way.
+  // A game-over line is not an instruction and is never suppressed.
+  el("hint").classList.toggle("spent", spent && state !== 2)
   el("hint").hidden = text === ""
 }
+
 
 /* -------------------------------------------------------------- the menu */
 

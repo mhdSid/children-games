@@ -78,10 +78,12 @@ body {
 .hint {
   position: fixed;
   left: 50%;
-  /* clears the rock row along the bottom of the dump truck scene */
-  bottom: calc(env(safe-area-inset-bottom) + 112px);
+  /* Along the top, out of the scene. At the bottom it sat over the pond,
+     which is exactly where he is playing. Clears the menu button on the
+     left and the readout on the right. */
+  top: calc(env(safe-area-inset-top) + 14px);
   transform: translateX(-50%);
-  max-width: 88%;
+  max-width: 56%;
   padding: 8px 16px;
   border-radius: 9px;
   background: rgba(13, 19, 24, .62);
@@ -91,10 +93,11 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  transition: bottom .15s;
+  opacity: 1;
+  transition: opacity .35s ease;
 }
 .hint[hidden] { display: none; }
-.hint.above-pad { bottom: calc(env(safe-area-inset-bottom) + 148px); }
+.hint.spent { opacity: 0; }
 
 .again {
   position: fixed;
@@ -149,7 +152,7 @@ body {
 @media (orientation: landscape) and (max-height: 520px) {
   .pad { grid-template-columns: repeat(3, 52px); bottom: 10px; }
   .pad button { height: 42px; }
-  .hint.above-pad { bottom: 124px; }
+  .hint { max-width: 46%; }
 }
 
 /* --------------------------------------------------------- turn the truck

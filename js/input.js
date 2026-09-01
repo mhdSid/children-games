@@ -5,7 +5,7 @@
 // starts a fresh grab and the first finger's rock is left stranded mid-air.
 
 import { DIRS, DOWN, MOVE, UP, gameAt } from "./config.js"
-import { el } from "./ui.js"
+import { el, spendHint } from "./ui.js"
 
 export function wireInput (canvas, { wasm, toFrame }, { onMenu }) {
   const turn = (dir) => wasm.turn(dir)
@@ -54,6 +54,7 @@ export function wireInput (canvas, { wasm, toFrame }, { onMenu }) {
     canvas.setPointerCapture(e.pointerId)
     active = e.pointerId
     sx = e.clientX; sy = e.clientY
+    spendHint()                             // he has acted; the instruction goes
     wasm.pointer(...toFrame(e), DOWN)
   })
 
